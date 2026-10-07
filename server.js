@@ -84,8 +84,8 @@ const routes={
 // ---- Import 1688 via TMAPI ----
 const IMG=path.join(__dirname,'public','img');
 async function tm(pathq){const k=db.secrets?.tmapi;if(!k)throw[400,'Clé TMAPI non enregistrée dans Gestion UP'];
- const r=await fetch('http://api.tmapi.top'+pathq+(pathq.includes('?')?'&':'?')+'apiToken='+encodeURIComponent(k),{headers:{Authorization:k},signal:AbortSignal.timeout(40000)});
- const j=await r.json().catch(()=>({}));if(j.code!==200||!j.data)throw[502,'TMAPI : '+(j.msg||j.message||('erreur '+r.status))];return j.data}
+ const r=await fetch('http://api.tmapi.top'+pathq,{headers:{apikey:k},signal:AbortSignal.timeout(40000)});
+ const j=await r.json().catch(()=>({}));if(j.code===4393)throw[402,'TMAPI : crédits insuffisants (forfait pas encore actif ?)'];if(j.code!==200||!j.data)throw[502,'TMAPI : '+(j.msg||j.message||('erreur '+r.status))];return j.data}
 async function tr(t){t=String(t||'').trim();if(!t||!/[\u4e00-\u9fff]/.test(t))return t;try{const r=await fetch('https://api.mymemory.translated.net/get?langpair=zh-CN|fr&q='+encodeURIComponent(t.slice(0,450)),{signal:AbortSignal.timeout(15000)});const j=await r.json();return j.responseData?.translatedText||t}catch{return t}}
 async function dl(u,name){try{if(u.startsWith('//'))u='https:'+u;const r=await fetch(u,{signal:AbortSignal.timeout(30000)});if(!r.ok)return null;fs.writeFileSync(path.join(IMG,name),Buffer.from(await r.arrayBuffer()));return '/img/'+name}catch{return null}}
 async function import1688(url,cat,u){const m=String(url||'').match(/(\d{8,})/);if(!m)throw[400,'Lien ou numéro 1688 invalide'];const iid=m[1];
