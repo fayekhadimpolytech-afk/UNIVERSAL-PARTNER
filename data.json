@@ -1,0 +1,723 @@
+{
+ "zones": [
+  {
+   "id": "partout",
+   "name": "Livraison gratuite partout (Sénégal et international)",
+   "fee": 0
+  }
+ ],
+ "cats": [
+  {
+   "id": "femme",
+   "name": "Femme",
+   "icon": "👡"
+  },
+  {
+   "id": "homme",
+   "name": "Homme",
+   "icon": "🥿"
+  },
+  {
+   "id": "enfant",
+   "name": "Enfant",
+   "icon": "🧸"
+  }
+ ],
+ "users": [
+  {
+   "id": "s1",
+   "name": "UNIVERSAL PARTNER",
+   "email": "admin@up.sn",
+   "pass": "00b3b58df49e0ed7506f2b29539a2ee634c672cdd958633dc17cbefa0093ecc5",
+   "role": "admin",
+   "country": "Sénégal",
+   "verified": true,
+   "years": 8
+  },
+  {
+   "id": "b1",
+   "name": "Acheteur Démo",
+   "email": "demo@up.sn",
+   "pass": "757d664987031f63d2b32fe3e5f2df2f86677c7a96a8acab6af5d1bf88de8053",
+   "role": "buyer",
+   "country": "Sénégal"
+  }
+ ],
+ "products": [
+  {
+   "id": "f4401590b15e",
+   "name": "Mule fourrée à carreaux noir & blanc",
+   "cat": "femme",
+   "sizes": [
+    "36-37",
+    "38-39",
+    "40-41",
+    "42-43",
+    "44-45"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🩴",
+   "desc": "Mule fermée en peluche motif vichy, intérieur moumoute blanc, semelle souple antidérapante.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 4500
+    },
+    {
+     "min": 10,
+     "price": 4050
+    },
+    {
+     "min": 50,
+     "price": 3600
+    }
+   ],
+   "created": 1791321946579,
+   "imgs": [
+    "/img/r0.jpg",
+    "/img/r1.jpg"
+   ]
+  },
+  {
+   "id": "fc0e6bd9cf3a",
+   "name": "Claquette fourrée tie-dye gris",
+   "cat": "femme",
+   "sizes": [
+    "36-37",
+    "38-39",
+    "40-41",
+    "42-43",
+    "44-45"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🩴",
+   "desc": "Claquette ouverte en fausse fourrure effet tie-dye gris-blanc, semelle moelleuse.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 4000
+    },
+    {
+     "min": 10,
+     "price": 3600
+    },
+    {
+     "min": 50,
+     "price": 3200
+    }
+   ],
+   "created": 1791321946578,
+   "imgs": [
+    "/img/r2.jpg"
+   ]
+  },
+  {
+   "id": "fcb3240cbbf7",
+   "name": "Mule matelassée grise col tricot",
+   "cat": "femme",
+   "sizes": [
+    "36-37",
+    "38-39",
+    "40-41",
+    "42-43",
+    "44-45"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🩴",
+   "desc": "Mule matelassée grise avec col en maille crème, intérieur fourré, semelle épaisse.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 5000
+    },
+    {
+     "min": 10,
+     "price": 4500
+    },
+    {
+     "min": 50,
+     "price": 4000
+    }
+   ],
+   "created": 1791321946577,
+   "imgs": [
+    "/img/r3.jpg"
+   ]
+  },
+  {
+   "id": "dd902fdb3314",
+   "name": "Mule fourrée noire",
+   "cat": "homme",
+   "sizes": [
+    "36-37",
+    "38-39",
+    "40-41",
+    "42-43",
+    "44-45"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🩴",
+   "desc": "Mule fermée en peluche noire, doublure moumoute blanche, semelle antidérapante.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 4500
+    },
+    {
+     "min": 10,
+     "price": 4050
+    },
+    {
+     "min": 50,
+     "price": 3600
+    }
+   ],
+   "created": 1791321946576,
+   "imgs": [
+    "/img/r4.jpg",
+    "/img/r6.jpg"
+   ]
+  },
+  {
+   "id": "9413a40eb079",
+   "name": "Mule côtelée grise semelle épaisse",
+   "cat": "femme",
+   "sizes": [
+    "36-37",
+    "38-39",
+    "40-41",
+    "42-43",
+    "44-45"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🩴",
+   "desc": "Mule en tissu côtelé gris, intérieur fourré, semelle plateforme confortable.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 5000
+    },
+    {
+     "min": 10,
+     "price": 4500
+    },
+    {
+     "min": 50,
+     "price": 4000
+    }
+   ],
+   "created": 1791321946575,
+   "imgs": [
+    "/img/r5.jpg"
+   ]
+  },
+  {
+   "id": "87c2ef00327b",
+   "name": "Claquette tricot torsadé grise",
+   "cat": "femme",
+   "sizes": [
+    "36-37",
+    "38-39",
+    "40-41",
+    "42-43",
+    "44-45"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🩴",
+   "desc": "Claquette ouverte en maille torsadée grise, semelle fourrée douce.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 4000
+    },
+    {
+     "min": 10,
+     "price": 3600
+    },
+    {
+     "min": 50,
+     "price": 3200
+    }
+   ],
+   "created": 1791321946574,
+   "imgs": [
+    "/img/r7.jpg"
+   ]
+  },
+  {
+   "id": "7762d68297c5",
+   "name": "Claquette nuage noire",
+   "cat": "homme",
+   "sizes": [
+    "36-37",
+    "38-39",
+    "40-41",
+    "42-43",
+    "44-45"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🩴",
+   "desc": "Claquette légère effet nuage, semelle épaisse amortissante, résistante à l'eau.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 3500
+    },
+    {
+     "min": 10,
+     "price": 3150
+    },
+    {
+     "min": 50,
+     "price": 2800
+    }
+   ],
+   "created": 1791321946573,
+   "imgs": [
+    "/img/r8.jpg"
+   ]
+  },
+  {
+   "id": "43c02c634669",
+   "name": "Claquette Fashion Sport blanche",
+   "cat": "homme",
+   "sizes": [
+    "36-37",
+    "38-39",
+    "40-41",
+    "42-43",
+    "44-45"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🩴",
+   "desc": "Claquette blanche imprimée Fashion Sport, légère et résistante à l'eau.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 3000
+    },
+    {
+     "min": 10,
+     "price": 2700
+    },
+    {
+     "min": 50,
+     "price": 2400
+    }
+   ],
+   "created": 1791321946572,
+   "imgs": [
+    "/img/r9.jpg"
+   ]
+  },
+  {
+   "id": "f6eed4a8b348",
+   "name": "Mule bouclette ouverte (blanc / gris)",
+   "cat": "femme",
+   "sizes": [
+    "36",
+    "37",
+    "38",
+    "39",
+    "40",
+    "41"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🩴",
+   "desc": "Mule bout ouvert en bouclette moelleuse, semelle intérieure peluche. Coloris blanc crème ou gris anthracite.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 4500
+    },
+    {
+     "min": 10,
+     "price": 4050
+    },
+    {
+     "min": 50,
+     "price": 3600
+    }
+   ],
+   "created": 1791318678114,
+   "imgs": [
+    "/img/q2.jpg",
+    "/img/q3.jpg"
+   ]
+  },
+  {
+   "id": "4240d7d5775b",
+   "name": "Mule côtelée grise semelle nuage",
+   "cat": "homme",
+   "sizes": [
+    "40",
+    "41",
+    "42",
+    "43",
+    "44",
+    "45"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🥿",
+   "desc": "Mule fermée en tissu côtelé gris, doublure sherpa, semelle épaisse effet nuage.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 5500
+    },
+    {
+     "min": 10,
+     "price": 4950
+    },
+    {
+     "min": 50,
+     "price": 4400
+    }
+   ],
+   "created": 1791318678114,
+   "imgs": [
+    "/img/q4.jpg"
+   ]
+  },
+  {
+   "id": "767715ed8888",
+   "name": "Mule velours côtelé bleu marine",
+   "cat": "homme",
+   "sizes": [
+    "40",
+    "41",
+    "42",
+    "43",
+    "44",
+    "45"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🥿",
+   "desc": "Mule fermée velours côtelé marine brodée ourson, intérieur fourré, semelle épaisse antidérapante.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 5500
+    },
+    {
+     "min": 10,
+     "price": 4950
+    },
+    {
+     "min": 50,
+     "price": 4400
+    }
+   ],
+   "created": 1791318678114,
+   "imgs": [
+    "/img/q5.jpg"
+   ]
+  },
+  {
+   "id": "96203d1e0ae5",
+   "name": "Claquette homme noire relief",
+   "cat": "homme",
+   "sizes": [
+    "40",
+    "41",
+    "42",
+    "43",
+    "44",
+    "45"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🩴",
+   "desc": "Claquette noire légère et imperméable, motif en relief, semelle texturée antidérapante.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 3000
+    },
+    {
+     "min": 10,
+     "price": 2700
+    },
+    {
+     "min": 50,
+     "price": 2400
+    }
+   ],
+   "created": 1791318678114,
+   "imgs": [
+    "/img/q1.jpg"
+   ]
+  },
+  {
+   "id": "09f8f08c0999",
+   "name": "Tong homme blanche « Fashion »",
+   "cat": "homme",
+   "sizes": [
+    "40",
+    "41",
+    "42",
+    "43",
+    "44",
+    "45"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🩴",
+   "desc": "Tong bride blanche, semelle damier marron/beige confortable, légère et résistante à l’eau.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 3000
+    },
+    {
+     "min": 10,
+     "price": 2700
+    },
+    {
+     "min": 50,
+     "price": 2400
+    }
+   ],
+   "created": 1791318678114,
+   "imgs": [
+    "/img/q6.jpg",
+    "/img/q7.jpg"
+   ]
+  },
+  {
+   "id": "70f5ce6c2943",
+   "name": "Pantoufle peluche « Together » ourson corail",
+   "cat": "femme",
+   "sizes": [
+    "36",
+    "37",
+    "38",
+    "39",
+    "40",
+    "41"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🥿",
+   "desc": "Pantoufle fermée en peluche corail, broderie « Together » et ourson, semelle antidérapante.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 5000
+    },
+    {
+     "min": 10,
+     "price": 4500
+    },
+    {
+     "min": 50,
+     "price": 4000
+    }
+   ],
+   "created": 1791243296146,
+   "imgs": [
+    "/img/p0.jpg",
+    "/img/p8.jpg"
+   ]
+  },
+  {
+   "id": "76d6bbc8baf5",
+   "name": "Mule ouverte noire nœud rouge",
+   "cat": "femme",
+   "sizes": [
+    "36",
+    "37",
+    "38",
+    "39",
+    "40",
+    "41"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🩴",
+   "desc": "Mule bout ouvert en bouclette noire, nœud rouge brodé, semelle souple.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 4500
+    },
+    {
+     "min": 10,
+     "price": 4050
+    },
+    {
+     "min": 50,
+     "price": 3600
+    }
+   ],
+   "created": 1791243296146,
+   "imgs": [
+    "/img/p1.jpg",
+    "/img/p9.jpg"
+   ]
+  },
+  {
+   "id": "76831959936a",
+   "name": "Pantoufle fourrure à carreaux beige",
+   "cat": "femme",
+   "sizes": [
+    "36",
+    "37",
+    "38",
+    "39",
+    "40",
+    "41"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🥿",
+   "desc": "Pantoufle fermée fausse fourrure à motif carreaux beige et blanc, intérieur moelleux.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 5500
+    },
+    {
+     "min": 10,
+     "price": 4950
+    },
+    {
+     "min": 50,
+     "price": 4400
+    }
+   ],
+   "created": 1791243296146,
+   "imgs": [
+    "/img/p2.jpg",
+    "/img/p6.jpg"
+   ]
+  },
+  {
+   "id": "c7d4a374bbe8",
+   "name": "Pantoufle ourson rose semelle nuage",
+   "cat": "femme",
+   "sizes": [
+    "36",
+    "37",
+    "38",
+    "39",
+    "40",
+    "41"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🧸",
+   "desc": "Peluche rose brodée ourson, semelle épaisse effet nuage, très confortable.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 6000
+    },
+    {
+     "min": 10,
+     "price": 5400
+    },
+    {
+     "min": 50,
+     "price": 4800
+    }
+   ],
+   "created": 1791243296146,
+   "imgs": [
+    "/img/p4.jpg",
+    "/img/p5.jpg"
+   ]
+  },
+  {
+   "id": "af19234b00cb",
+   "name": "Pantoufle enfant ourson rose",
+   "cat": "enfant",
+   "sizes": [
+    "24-25",
+    "26-27",
+    "28-29",
+    "30-31",
+    "32-33"
+   ],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🧸",
+   "desc": "Peluche rose brodée ourson, intérieur doux, semelle antidérapante. Tailles enfant.",
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 3500
+    },
+    {
+     "min": 10,
+     "price": 3150
+    },
+    {
+     "min": 50,
+     "price": 2800
+    }
+   ],
+   "created": 1791243296146,
+   "imgs": [
+    "/img/p3.jpg",
+    "/img/p7.jpg"
+   ],
+   "out": true
+  }
+ ],
+ "orders": [],
+ "rfqs": [],
+ "messages": [],
+ "reviews": [],
+ "sessions": {},
+ "settings": {
+  "whatsapp": "221778722777"
+ }
+}
