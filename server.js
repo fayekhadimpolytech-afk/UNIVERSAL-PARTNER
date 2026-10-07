@@ -83,25 +83,32 @@ const routes={
 
 // ---- Import 1688 via TMAPI ----
 const IMG=path.join(__dirname,'public','img');
-async function tm(pathq){const k=db.secrets?.tmapi;if(!k)throw[400,'Clé TMAPI non enregistrée dans Gestion UP'];
- const r=await fetch('http://api.tmapi.top'+pathq,{headers:{apikey:k},signal:AbortSignal.timeout(40000)});
+async function tm(pathq,body){const k=db.secrets?.tmapi;if(!k)throw[400,'Clé TMAPI non enregistrée dans Gestion UP'];
+ const r=await fetch('http://api.tmapi.top'+pathq,{method:body?'POST':'GET',body:body?JSON.stringify(body):undefined,headers:{apikey:k,'Content-Type':'application/json'},signal:AbortSignal.timeout(40000)});
  const j=await r.json().catch(()=>({}));if(j.code===4393)throw[402,'TMAPI : crédits insuffisants (forfait pas encore actif ?)'];if(j.code!==200||!j.data)throw[502,'TMAPI : '+(j.msg||j.message||('erreur '+r.status))];return j.data}
 async function tr(t){t=String(t||'').trim();if(!t||!/[\u4e00-\u9fff]/.test(t))return t;try{const r=await fetch('https://api.mymemory.translated.net/get?langpair=zh-CN|fr&q='+encodeURIComponent(t.slice(0,450)),{signal:AbortSignal.timeout(15000)});const j=await r.json();return j.responseData?.translatedText||t}catch{return t}}
 async function dl(u,name){try{if(u.startsWith('//'))u='https:'+u;const r=await fetch(u,{signal:AbortSignal.timeout(30000)});if(!r.ok)return null;fs.writeFileSync(path.join(IMG,name),Buffer.from(await r.arrayBuffer()));return '/img/'+name}catch{return null}}
-async function import1688(url,cat,u){const m=String(url||'').match(/(\d{8,})/);if(!m)throw[400,'Lien ou numéro 1688 invalide'];const iid=m[1];
- let d;try{d=await tm('/1688/global/item_detail?item_id='+iid+'&language=fr')}catch(e){d=await tm('/1688/item_detail?item_id='+iid)}
+const SITES={'1688':'1688',taobao:'Taobao/Tmall',alibaba:'Alibaba',yiwugo:'Yiwugo',aliexpress:'AliExpress',tiktok:'TikTok Shop'};
+async function fetchItem(url){url=String(url||'').trim();const L=url.toLowerCase();const num=(url.match(/(\d{6,})/g)||[]).pop();
+ if(/alibaba\.com/.test(L)&&!/1688|taobao|aliexpress/.test(L))return{site:'alibaba',id:num||'',cur:'$',d:await tm('/alibaba/item_detail_by_url',{url})};
+ if(/aliexpress/.test(L)){const m=url.match(/item\/(\d+)/)||[0,num];return{site:'aliexpress',id:m[1],cur:'$',d:await tm('/aliexpress/item_detail?item_id='+m[1]+'&country=us')}}
+ if(/tiktok/.test(L)){const m=url.match(/(\d{15,})/);if(!m)throw[400,'Numéro de produit TikTok introuvable dans le lien'];const st=(url.match(/[?&]region=([a-z]{2})/i)||url.match(/\/\/(?:shop|www)\.tiktok\.com\/([a-z]{2})\//i)||[0,'us'])[1].toLowerCase().replace('gb','uk');const site=['id','vn','my','th','ph','sg','us','uk'].includes(st)?st:'us';return{site:'tiktok',id:m[1],cur:site==='us'?'$':site.toUpperCase()+' ',d:await tm('/tikshop/item_detail?site='+site+'&item_id='+m[1])}}
+ if(/yiwugo/.test(L))return{site:'yiwugo',id:num,cur:'¥',d:await tm('/yiwugo/item_detail?item_id='+num)};
+ if(/taobao|tmall/.test(L)){const m=url.match(/[?&]id=(\d+)/)||[0,num];return{site:'taobao',id:m[1],cur:'¥',d:await tm('/taobao/item_detail?item_id='+m[1])}}
+ if(!num)throw[400,'Lien produit non reconnu'];let d;try{d=await tm('/1688/global/item_detail?item_id='+num+'&language=fr')}catch(e){d=await tm('/1688/item_detail?item_id='+num)}return{site:'1688',id:num,cur:'¥',d}}
+async function import1688(url,cat,u){const F=await fetchItem(url);const d=F.d,iid=String(F.id||Date.now());
  const title=d.title||d.subject||'';const props=(d.sku_props||d.skuProps||[]);
  const pv=props.map(p=>({name:p.prop_name||p.name||'',values:(p.values||p.value||[]).map(v=>({name:v.name||v.value||'',img:v.imageUrl||v.image_url||v.img||''}))}));
  const imgsSrc=[...new Set([...(d.main_imgs||d.images||[]),...pv.flatMap(p=>p.values.map(v=>v.img)).filter(Boolean)])].slice(0,8);
  const tag='t'+iid.slice(-6)+'_';const imgs=(await Promise.all(imgsSrc.map((s,i)=>dl(s,tag+i+'.jpg')))).filter(Boolean);
- const isSize=n=>/尺码|码|size|taille/i.test(n);
+ const isSize=n=>/尺码|码|尺寸|size|taille/i.test(n);
  const sizeP=pv.find(p=>isSize(p.name)),colorP=pv.find(p=>p!==sizeP);
  const cn=[title,...(colorP?.values.map(v=>v.name)||[])];const fr=await Promise.all(cn.map(tr));
- const colors=fr.slice(1);const sizes=sizeP?sizeP.values.map(v=>v.name.replace(/码/g,'').trim()):['36','37','38','39','40','41'];
+ const colors=fr.slice(1);const sizes=sizeP?(await Promise.all(sizeP.values.map(v=>tr(v.name.replace(/码/g,'').trim())))):[];
  const pr=d.price_info||{};const cny=+(pr.price||pr.sale_price||d.price||(d.price_range||d.priceRange||[])[0]?.[1]||0)||null;
- const name=(fr[0]||'Nouveau modèle 1688').slice(0,90);
- return {id:id(),name,cat:['femme','homme','enfant'].includes(cat)?cat:'femme',seller:u.id,unit:'pièce',moq:1,img:'🥿',imgs:imgs.length?imgs:undefined,sizes,colors,
-  desc:name+(colors.length?'. Coloris : '+colors.join(', ')+'.':''),sold:0,created:Date.now(),draft:true,src:{site:'1688',id:iid,cny},tiers:[{min:1,price:0}]}}
+ const name=(fr[0]||'Nouveau produit '+SITES[F.site]).slice(0,90);
+ return {id:id(),name,cat:db.cats.some(c=>c.id===cat)?cat:db.cats[0].id,seller:u.id,unit:'pièce',moq:1,img:'🥿',imgs:imgs.length?imgs:undefined,sizes,colors,
+  desc:name+(colors.length?'. Coloris : '+colors.join(', ')+'.':''),sold:0,created:Date.now(),draft:true,src:{site:F.site,id:iid,cny,cur:F.cur},tiers:[{min:1,price:0}]}}
 function login(u){const t=id()+id();db.sessions[t]=u.id;save();return{token:t,user:pub(u)}}
 function need(u,role){if(!u)throw[401,'Connexion requise'];if(role&&u.role!==role)throw[403,'Réservé à UP']}
 const mime={'.jpg':'image/jpeg','.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css'};
