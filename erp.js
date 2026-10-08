@@ -7,7 +7,7 @@ module.exports=function(routes,X){
   e.settings??={rate:90,air:7500,sea:175000};if(!e.settings.v2){if(e.settings.rate===85)e.settings.rate=90;e.settings.v2=1}e.settings.etaAir??=15;e.settings.etaSea??=60;
   if(!e.settings.v3){e.settings.v3=1;if(e.settings.etaAir===10)e.settings.etaAir=15;if(e.settings.etaSea===45)e.settings.etaSea=60;
    (e.pos||[]).filter(p=>!p.receptions?.length&&p.status!=='clôturée').forEach(p=>{p.customs=0;if(p.dates?.['expédiée'])p.eta=new Date(p.dates['expédiée']+864e5*(p.mode==='maritime'?e.settings.etaSea:e.settings.etaAir)).toISOString().slice(0,10);if(p.lines)cost(p)})}
-  for(const k of['sales','couriers'])e[k]??=[];for(const k of['stock','moves','pos','disputes','inventories','audit'])e[k]??=[];return e};
+  for(const k of['sales','couriers','cash','expenses'])e[k]??=[];for(const k of['stock','moves','pos','disputes','inventories','audit'])e[k]??=[];return e};
  // Rôles : admin, stock (gestionnaire stock), commercial, comptable (lecture), livreur
  const ROLES={admin:'Admin',stock:'Gestionnaire stock',commercial:'Commercial',comptable:'Comptable (lecture)',livreur:'Livreur'};
  const can=(u,w)=>{if(!u)throw[401,'Connexion requise'];const r=u.role;
@@ -46,13 +46,15 @@ module.exports=function(routes,X){
    l.freight=Math.round(freight*wf);l.other=Math.round(other*wv);l.total=l.goods+l.freight+l.other;l.unitCost=Math.round(l.total/(+l.qty||1))});
   Object.assign(po,{rate,goods,measure,freightAuto,freight,other,total:goods+freight+other,allocBy:sumKey>0?(sea?'volume':'poids'):'quantité'});return dry?po:po}
  const tot=sa=>sa.items.reduce((a,i)=>a+i.qty*i.price,0);
- const sv=sa=>{const t=tot(sa),c=sa.items.reduce((a,i)=>a+(i.cost||0)*i.qty,0);return{...sa,total:t,cost:sa.picked?c:null,margin:sa.picked?t-c:null}};
+ const sv=sa=>{const t=tot(sa),c=sa.items.reduce((a,i)=>a+(i.cost||0)*i.qty,0);return{...sa,total:t,cost:sa.picked?c:null,margin:sa.picked?t-c:null,pct:sa.picked&&t?Math.round(100*(t-c)/t):null}};
  function syncSite(){const e=E(),db=X.db();for(const o of db.orders||[]){if(e.sales.some(s=>s.ref===o.id))continue;
   e.sales.unshift({id:id(),ref:o.id,no:o.id,source:'site',date:o.date,name:o.name||'',phone:o.phone||'',address:o.address||'',zone:'',note:'',status:'nouvelle',dates:{nouvelle:o.date},
-   items:o.items.map(i=>({pid:i.id,name:i.name,variant:i.size?'Taille '+i.size:'',qty:i.qty,price:i.price}))})}e.sales.sort((a,b)=>b.date-a.date)}
+   items:o.items.map(i=>({pid:i.id,name:i.name,variant:[i.size?'Taille '+i.size:'',i.color||''].filter(Boolean).join(' / '),qty:i.qty,price:i.price}))})}e.sales.sort((a,b)=>b.date-a.date)}
  // Sortie de stock à la préparation, au CMP du moment (sert au calcul de marge)
- function stockFor(i){const L=E().stock.filter(s=>s.pid===i.pid);return L.find(s=>s.variant===i.variant)||L.find(s=>i.variant&&s.variant.replace(/^Taille /,'')===i.variant.replace(/^Taille /,''))||(!i.variant?L.find(s=>s.qty>=i.qty):null)}
- function pick(u,sa){const miss=sa.items.filter(i=>{const s=stockFor(i);return !s||s.qty<i.qty});if(miss.length)throw[400,'Stock insuffisant : '+miss.map(i=>i.name+(i.variant?' '+i.variant:'')).join(', ')];
+ function stockFor(i){const L=E().stock.filter(s=>s.pid===i.pid),nz=v=>String(v||'').replace(/Taille /g,'').toLowerCase().split(/\s*\/\s*/).filter(Boolean).sort().join('/');
+  // Variante exacte (taille + couleur) ; sinon la seule ligne de stock du produit si elle n'a pas de variante. Plus de « première variante disponible ».
+  return L.find(s=>s.variant===i.variant)||L.find(s=>nz(s.variant)===nz(i.variant))||(L.length===1&&!L[0].variant?L[0]:null)}
+ function pick(u,sa){const miss=sa.items.filter(i=>{const s=stockFor(i);return !s||s.qty<i.qty});if(miss.length)throw[400,'Stock insuffisant ou variante absente du stock : '+miss.map(i=>i.name+(i.variant?' '+i.variant:'')).join(', ')];
   for(const i of sa.items){const s=stockFor(i);i.sid=s.id;i.cost=s.cmp;move(u,s,'vente',-i.qty,{reason:'Vente '+sa.no,ref:sa.id})}sa.picked=true}
  function restock(u,sa,why){for(const i of sa.items){const s=E().stock.find(x=>x.id===i.sid);if(s)move(u,s,'retour',i.qty,{reason:'Commande '+why+' '+sa.no,ref:sa.id})}sa.picked=false;sa.restocked=true}
  // Bon de livraison PDF (générateur PDF minimal, police Helvetica, accents WinAnsi)
@@ -68,6 +70,8 @@ module.exports=function(routes,X){
    `<< /Length ${Buffer.byteLength(st,'latin1')} >>\nstream\n${st}\nendstream`,'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>'];
   let out='%PDF-1.4\n';const off=[];objs.forEach((o,i)=>{off.push(Buffer.byteLength(out,'latin1'));out+=`${i+1} 0 obj\n${o}\nendobj\n`});const x=Buffer.byteLength(out,'latin1');
   out+=`xref\n0 ${objs.length+1}\n0000000000 65535 f \n`+off.map(o=>String(o).padStart(10,'0')+' 00000 n \n').join('')+`trailer\n<< /Size ${objs.length+1} /Root 1 0 R >>\nstartxref\n${x}\n%%EOF`;return Buffer.from(out,'latin1')}
+ const EXP=['fret','transitaire','publicité Facebook','transport','salaires','autres'];
+ const dayOf=t=>new Date(t).toISOString().slice(0,10); // Africa/Dakar = UTC+0 toute l'année
  const PO_ST=['brouillon','commandée','payée','expédiée','chez le transitaire','en transit','arrivée Dakar','réceptionnée partielle','réceptionnée totale','clôturée'];
  const S=X.save;
  Object.assign(routes,{
@@ -168,11 +172,42 @@ module.exports=function(routes,X){
   'POST /api/erp/couriers':(q,b,u)=>{can(u,'sales');const e=E();if(!String(b.name||'').trim()||!String(b.phone||'').trim())throw[400,'Nom et téléphone requis'];
    let c=b.id&&e.couriers.find(x=>x.id===b.id);if(!c){c={id:id(),created:Date.now()};e.couriers.unshift(c)}Object.assign(c,{name:String(b.name).trim(),phone:String(b.phone).trim(),zone:String(b.zone||'').trim()});audit(u,'Fiche livreur',c.name,c.phone+' '+c.zone);S();return c},
   'GET /api/erp/sale/pdf':(q,b,u)=>{can(u);const sa=E().sales.find(x=>x.id===q.id);if(!sa)throw[404,'Vente introuvable'];return{__raw:{type:'application/pdf',name:'bon-livraison-'+sa.no+'.pdf',body:pdfBL(sa)}}},
+  // ---- Recettes : remise de caisse quotidienne par livreur ----
+  'GET /api/erp/cash':(q,b,u)=>{can(u);const e=E(),day=q.day||dayOf(Date.now());const rows={};
+   for(const s of e.sales){if(s.status!=='livrée/payée'||!s.paid||!s.delivery||dayOf(s.paid.date)!==day)continue;const r=rows[s.delivery.courier]??={courier:s.delivery.courier,name:s.delivery.courierName,phone:s.delivery.courierPhone,expected:{'espèces':0,Wave:0,'Orange Money':0},fees:0,sales:[]};
+    r.expected[s.paid.method]+=s.paid.amount;r.fees+=s.delivery.fee||0;r.sales.push({no:s.no,name:s.name,amount:s.paid.amount,method:s.paid.method})}
+   for(const c of e.cash.filter(c=>c.day===day))rows[c.courier]??={courier:c.courier,name:c.name,phone:'',expected:c.expected,fees:0,sales:[]};
+   const list=Object.values(rows).map(r=>{const st=e.cash.find(c=>c.day===day&&c.courier===r.courier);return{...r,settlement:st||null}});
+   return{day,rows:list,history:e.cash.slice(0,200)}},
+  'POST /api/erp/cash':(q,b,u)=>{can(u,'sales');const e=E();const day=String(b.day||'');if(!/^\d{4}-\d{2}-\d{2}$/.test(day))throw[400,'Date invalide'];
+   const cur=routes['GET /api/erp/cash']({day},{},u).rows.find(r=>r.courier===b.courier);if(!cur)throw[404,'Aucun encaissement pour ce livreur ce jour-là'];
+   const M=['espèces','Wave','Orange Money'],rem={},gap={};M.forEach(m=>{rem[m]=Math.max(0,Math.round(+b.remitted?.[m]||0));gap[m]=rem[m]-cur.expected[m]});
+   let st=e.cash.find(c=>c.day===day&&c.courier===b.courier);const isNew=!st;if(!st){st={id:id(),day,courier:b.courier,name:cur.name};e.cash.unshift(st)}
+   const feePaid=b.feePaid!==false;Object.assign(st,{expected:cur.expected,remitted:rem,gap,totalExpected:M.reduce((a,m)=>a+cur.expected[m],0),totalRemitted:M.reduce((a,m)=>a+rem[m],0),fees:cur.fees,feePaid,note:String(b.note||''),user:u.name,date:Date.now()});
+   st.totalGap=st.totalRemitted-st.totalExpected;audit(u,isNew?'Remise de caisse':'Correction remise de caisse',st.name+' '+day,'attendu '+st.totalExpected+', remis '+st.totalRemitted+', écart '+st.totalGap);S();return st},
+  // ---- Dépenses ----
+  'GET /api/erp/expenses':(q,b,u)=>{can(u);let r=E().expenses;if(q.from)r=r.filter(x=>x.day>=q.from);if(q.to)r=r.filter(x=>x.day<=q.to);if(q.cat)r=r.filter(x=>x.cat===q.cat);
+   const by={};EXP.forEach(c=>by[c]=0);r.forEach(x=>by[x.cat]=(by[x.cat]||0)+x.amount);return{cats:EXP,rows:r,byCat:by,total:r.reduce((a,x)=>a+x.amount,0)}},
+  'POST /api/erp/expenses':(q,b,u)=>{can(u,'admin');const e=E();if(!EXP.includes(b.cat))throw[400,'Catégorie invalide'];const amount=Math.round(+b.amount);if(!(amount>0))throw[400,'Montant requis'];
+   const day=/^\d{4}-\d{2}-\d{2}$/.test(b.day||'')?b.day:dayOf(Date.now());let x=b.id&&e.expenses.find(v=>v.id===b.id);const isNew=!x;if(!x){x={id:id(),created:Date.now()};e.expenses.unshift(x)}
+   Object.assign(x,{day,cat:b.cat,amount,label:String(b.label||'').trim(),po:b.po||'',pay:String(b.pay||''),user:u.name});e.expenses.sort((a,b)=>b.day.localeCompare(a.day));
+   audit(u,isNew?'Dépense':'Modification dépense',x.cat,x.amount+' FCFA — '+x.label);S();return x},
+  'POST /api/erp/expenses/delete':(q,b,u)=>{can(u,'admin');const e=E();const x=e.expenses.find(v=>v.id===b.id);if(!x)throw[404,'Dépense introuvable'];e.expenses=e.expenses.filter(v=>v!==x);audit(u,'Suppression dépense',x.cat,x.amount+' FCFA — '+x.label);S();return{ok:true}},
+  // ---- Marges ----
+  'GET /api/erp/margins':(q,b,u)=>{can(u);const e=E(),from=q.from||'0000',to=q.to||'9999',g=q.group||'jour';
+   const L=e.sales.filter(s=>s.status==='livrée/payée'&&s.picked!==false).map(sv).filter(s=>{const d=dayOf(s.paid?.date||s.date);return d>=from&&d<=to});
+   const key=t=>{const d=dayOf(t);if(g==='mois')return d.slice(0,7);if(g==='semaine'){const x=new Date(d+'T00:00:00Z'),w=(x.getUTCDay()+6)%7;x.setUTCDate(x.getUTCDate()-w);return x.toISOString().slice(0,10)}return d};
+   const P={};for(const s of L){const k=key(s.paid?.date||s.date),p=P[k]??={period:k,count:0,revenue:0,cost:0,fees:0};p.count++;p.revenue+=s.total;p.cost+=s.cost||0;p.fees+=s.delivery?.fee||0}
+   const ex=e.expenses.filter(x=>x.day>=from&&x.day<=to);for(const x of ex){const p=P[key(Date.parse(x.day+'T12:00:00Z'))]??={period:key(Date.parse(x.day+'T12:00:00Z')),count:0,revenue:0,cost:0,fees:0};p.exp=(p.exp||0)+x.amount}
+   const per=Object.values(P).map(p=>({...p,exp:p.exp||0,margin:p.revenue-p.cost,pct:p.revenue?Math.round(100*(p.revenue-p.cost)/p.revenue):0,net:p.revenue-p.cost-p.fees-(p.exp||0)})).sort((a,b)=>b.period.localeCompare(a.period));
+   const T=per.reduce((a,p)=>({count:a.count+p.count,revenue:a.revenue+p.revenue,cost:a.cost+p.cost,fees:a.fees+p.fees,exp:a.exp+p.exp}),{count:0,revenue:0,cost:0,fees:0,exp:0});
+   T.margin=T.revenue-T.cost;T.pct=T.revenue?Math.round(100*T.margin/T.revenue):0;T.net=T.margin-T.fees-T.exp;
+   return{sales:L.map(s=>({id:s.id,no:s.no,date:s.paid?.date||s.date,name:s.name,total:s.total,cost:s.cost,margin:s.margin,pct:s.total?Math.round(100*s.margin/s.total):0,fee:s.delivery?.fee||0,red:s.total?s.margin/s.total<.5:false,items:s.items.map(i=>i.qty+'× '+i.name+(i.variant?' '+i.variant:'')).join(' | ')})),periods:per,total:T,threshold:50}},
   'POST /api/erp/demo':(q,b,u)=>{if(u?.role!=='admin')throw[403,'Réservé à l\'admin'];const r=demo(u,b.purge);S();return r},
  });
  // Données de démo : 10 produits suivis en stock + 2 commandes 1688 (1 réceptionnée avec litige, 1 à réceptionner)
  function demo(u,purge){const e=E();
-  if(purge){const ids=new Set(e.stock.filter(s=>s.demo).map(s=>s.id));e.stock=e.stock.filter(s=>!s.demo);e.moves=e.moves.filter(m=>!ids.has(m.sid));e.pos=e.pos.filter(p=>!p.demo);e.disputes=e.disputes.filter(d=>!d.demo);e.sales=e.sales.filter(x=>!x.demo);e.couriers=e.couriers.filter(x=>!x.demo);
+  if(purge){const ids=new Set(e.stock.filter(s=>s.demo).map(s=>s.id));e.stock=e.stock.filter(s=>!s.demo);e.moves=e.moves.filter(m=>!ids.has(m.sid));e.pos=e.pos.filter(p=>!p.demo);e.disputes=e.disputes.filter(d=>!d.demo);e.sales=e.sales.filter(x=>!x.demo);e.couriers=e.couriers.filter(x=>!x.demo);e.cash=e.cash.filter(x=>!x.demo);e.expenses=e.expenses.filter(x=>!x.demo);
    X.db().products.forEach(p=>{if(!e.stock.some(s=>s.pid===p.id)){delete p.out;delete p.stockQty;delete p.outSizes}});audit(u,'Purge données de démo');return{ok:true}}
   if(e.stock.some(s=>s.demo))throw[400,'Données de démo déjà présentes'];
   const ps=X.db().products.filter(p=>!p.draft).slice(0,10);
@@ -196,6 +231,13 @@ module.exports=function(routes,X){
    const sa={id:id(),demo:true,no:(k%3?'WA':'UP')+String(4100+k),source:k%3?'whatsapp':'site',date:d0-864e5*(14-k),name,phone:'77 '+(500+k*7)+' '+(10+k)+' '+(20+k),address:addr+', Dakar',zone:c.zone.split(' / ')[0],note:'',items:[{pid:p.id,name:p.name,variant:s.variant,qty,price}],status:'nouvelle',dates:{nouvelle:d0-864e5*(14-k)},by:'démo'};e.sales.push(sa);
    const tgt=FIN[k],steps=[...PATH.slice(1,(PATH.includes(tgt)?PATH.indexOf(tgt):3)+1),...(['livrée/payée','refusée','retournée'].includes(tgt)?[tgt]:[])];
    for(const st of steps)routes['POST /api/erp/sale/status']({},{id:sa.id,status:st,courier:c.id,zone:sa.zone,fee:[1500,2000,2500][k%3],method:PAY[k%3],reason:tgt==='refusée'?'Client injoignable':tgt==='retournée'?'Taille trop petite':''},u)});
+  e.sales.filter(s=>s.demo&&s.paid).forEach(s=>{s.paid.date=Math.min(d0,s.date+864e5);s.dates['livrée/payée']=s.paid.date;if(s.delivery)s.delivery.done=s.paid.date});
+  const days=[...new Set(e.sales.filter(s=>s.demo&&s.paid).map(s=>dayOf(s.paid.date)))];
+  let gapDone=0;days.forEach((d,k)=>{const r=routes['GET /api/erp/cash']({day:d},{},u).rows;r.forEach((c,j)=>{const rem={...c.expected};const gp=!gapDone&&k>0&&rem['espèces']>=1000;if(gp){rem['espèces']-=1000;gapDone=1}
+   const st=routes['POST /api/erp/cash']({},{day:d,courier:c.courier,remitted:rem,note:gp?'Démo : manque 1 000 F, à récupérer':''},u);st.demo=true})});
+  [['fret',112500,'Fret aérien commande 3921457788012',13],['transitaire',15000,'Frais de dossier transitaire',12],['publicité Facebook',25000,'Campagne pantoufles 7 jours',10],['publicité Facebook',15000,'Boost post carrousel',4],
+   ['transport',5000,'Taxi entrepôt → bureau',9],['transport',3000,'Course livraison urgente',3],['salaires',60000,'Préparateur commandes (quinzaine)',2],['autres',4500,'Sachets et étiquettes',6]].forEach(([cat,amount,label,ago])=>{
+   const x={id:id(),demo:true,created:d0,day:dayOf(d0-864e5*ago),cat,amount,label,po:'',pay:'',user:u.name};e.expenses.push(x)});e.expenses.sort((a,b)=>b.day.localeCompare(a.day));
   e.sales.sort((a,b)=>b.date-a.date);e.moves.forEach(m=>{if(S1.some(s=>s.id===m.sid))m.demo=true});
   audit(u,'Chargement données de démo','',ps.length+' produits, 2 commandes 1688, 15 ventes');return{ok:true}}
  return{E,audit,can,move,getStock};

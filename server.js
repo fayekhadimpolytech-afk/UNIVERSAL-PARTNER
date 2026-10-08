@@ -50,7 +50,7 @@ const routes={
  'POST /api/login':(q,b)=>{const u=db.users.find(u=>u.email===b.email&&u.pass===hash(b.pass));if(!u)throw[401,'Identifiants invalides'];return login(u)},
  'GET /api/me':(q,b,u)=>pub(u),
  'POST /api/orders':(q,b,u)=>{if(!b.items?.length)throw[400,'Panier vide'];if(!u&&(!b.name?.trim()||!b.phone?.trim()||!b.address?.trim()))throw[400,'Nom, téléphone et adresse requis'];if(!b.phone?.trim()||!b.address?.trim())throw[400,'Téléphone et adresse requis'];
-  const items=b.items.map(i=>{const p=db.products.find(p=>p.id===i.id);if(!p||p.draft)throw[400,'Produit invalide'];if(p.out)throw[400,'Stock épuisé : '+p.name];const qty=Math.max(+i.qty,p.moq);return{id:p.id,size:i.size||'',img:p.imgs?.[0]||p.img,name:p.name,seller:p.seller,qty,price:priceFor(p,qty)}});
+  const items=b.items.map(i=>{const p=db.products.find(p=>p.id===i.id);if(!p||p.draft)throw[400,'Produit invalide'];if(p.out)throw[400,'Stock épuisé : '+p.name];if(p.sizes?.length&&!p.sizes.includes(i.size))throw[400,'Choisissez la taille : '+p.name];if(p.colors?.length&&!p.colors.includes(i.color))throw[400,'Choisissez la couleur : '+p.name];if((p.outSizes||[]).includes('Taille '+i.size))throw[400,'Taille '+i.size+' épuisée : '+p.name];const qty=Math.max(+i.qty,p.moq);return{id:p.id,size:i.size||'',color:i.color||'',img:p.imgs?.[0]||p.img,name:p.name,seller:p.seller,qty,price:priceFor(p,qty)}});
   const ship=0;
   const o={id:'UP'+Date.now().toString().slice(-7),buyer:u?.id||null,name:(b.name||u?.name||'').trim(),items,ship,sub:items.reduce((s,i)=>s+i.qty*i.price,0),total:items.reduce((s,i)=>s+i.qty*i.price,0)+(ship||0),pay:'livraison',address:b.address,phone:b.phone,zone:'partout',
    status:'à payer à la livraison',date:Date.now()};
