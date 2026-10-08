@@ -75,7 +75,7 @@ module.exports=function(routes,X){
  const PO_ST=['brouillon','commandée','payée','expédiée','chez le transitaire','en transit','arrivée Dakar','réceptionnée partielle','réceptionnée totale','clôturée'];
  const S=X.save;
  Object.assign(routes,{
-  'GET /api/erp/me':(q,b,u)=>{can(u);return{user:X.pub(u),roles:ROLES,write:u.role==='admin'||u.role==='stock',settings:E().settings,poStatuses:PO_ST}},
+  'GET /api/erp/me':(q,b,u)=>{if(u?.role!=='livreur')can(u);return{user:X.pub(u),roles:ROLES,write:u.role==='admin'||u.role==='stock',settings:E().settings,poStatuses:PO_ST}},
   'GET /api/erp/products':(q,b,u)=>{can(u);return X.db().products.map(p=>({id:p.id,name:p.name,sizes:p.sizes||[],colors:p.colors||[],draft:!!p.draft,out:!!p.out,img:p.imgs?.[0]||'',cny:p.src?.cny||null,price:p.tiers?.[0]?.price||0,srcId:p.src?.id||'',site:p.src?.site||''}))},
   'GET /api/erp/stock':(q,b,u)=>{can(u);const e=E();let r=e.stock.map(view);
    if(q.q){const s=q.q.toLowerCase();r=r.filter(x=>(x.label+x.loc).toLowerCase().includes(s))}if(q.alert)r=r.filter(x=>x.alert);
@@ -203,6 +203,27 @@ module.exports=function(routes,X){
    const T=per.reduce((a,p)=>({count:a.count+p.count,revenue:a.revenue+p.revenue,cost:a.cost+p.cost,fees:a.fees+p.fees,exp:a.exp+p.exp}),{count:0,revenue:0,cost:0,fees:0,exp:0});
    T.margin=T.revenue-T.cost;T.pct=T.revenue?Math.round(100*T.margin/T.revenue):0;T.net=T.margin-T.fees-T.exp;
    return{sales:L.map(s=>({id:s.id,no:s.no,date:s.paid?.date||s.date,name:s.name,total:s.total,cost:s.cost,margin:s.margin,pct:s.total?Math.round(100*s.margin/s.total):0,fee:s.delivery?.fee||0,red:s.total?s.margin/s.total<.5:false,items:s.items.map(i=>i.qty+'× '+i.name+(i.variant?' '+i.variant:'')).join(' | ')})),periods:per,total:T,threshold:50}},
+  // ---- Tableau de bord ----
+  'GET /api/erp/dashboard':(q,b,u)=>{can(u);syncSite();const e=E(),now=Date.now(),td=dayOf(now);
+   const wk=(()=>{const x=new Date(td+'T00:00:00Z');x.setUTCDate(x.getUTCDate()-(x.getUTCDay()+6)%7);return x.toISOString().slice(0,10)})(),mo=td.slice(0,7)+'-01';
+   const paid=e.sales.filter(s=>s.status==='livrée/payée').map(sv),pd=s=>dayOf(s.paid?.date||s.date);
+   const per=from=>{const L=paid.filter(s=>pd(s)>=from),ca=L.reduce((a,s)=>a+s.total,0),c=L.reduce((a,s)=>a+(s.cost||0),0);return{count:L.length,ca,margin:ca-c,pct:ca?Math.round(100*(ca-c)/ca):0,basket:L.length?Math.round(ca/L.length):0}};
+   const ok=e.sales.filter(s=>s.status==='livrée/payée').length,ko=e.sales.filter(s=>['refusée','retournée'].includes(s.status)).length;
+   const st=e.stock.map(view);const top={};for(const s of paid)for(const i of s.items){const t=top[i.pid]??={pid:i.pid,name:i.name,img:prod(i.pid)?.imgs?.[0]||'',qty:0,ca:0};t.qty+=i.qty;t.ca+=i.qty*i.price}
+   const last={};for(const m of e.moves){const k=m.sid;if(m.type==='vente')last[k]=Math.max(last[k]||0,m.date);if(m.qty>0&&m.type!=='retour')(last['in'+k]??=m.date,last['in'+k]=Math.min(last['in'+k],m.date))}
+   const dormant=st.filter(s=>s.qty>0).map(s=>{const ref=last[s.id]||last['in'+s.id]||now;return{...s,lastSale:last[s.id]||null,days:Math.floor((now-ref)/864e5)}}).filter(s=>s.days>60).sort((a,b)=>b.days-a.days);
+   const pos=e.pos.filter(p=>!/réceptionnée totale|clôturée/.test(p.status)).sort((a,b)=>String(a.eta||'9').localeCompare(String(b.eta||'9'))).map(p=>({id:p.id,no:p.no,supplier:p.supplier,mode:p.mode,status:p.status,eta:p.eta,total:p.total,late:p.eta&&p.eta<td&&!/arrivée|réceptionnée/.test(p.status)}));
+   return{today:per(td),week:per(wk),month:per(mo),delivery:{ok,ko,rate:ok+ko?Math.round(100*ok/(ok+ko)):0,pending:e.sales.filter(s=>['nouvelle','confirmée','préparée','en livraison'].includes(s.status)).length},
+    stock:{value:st.reduce((a,s)=>a+s.value,0),qty:st.reduce((a,s)=>a+s.qty,0),outs:st.filter(s=>s.qty<=0),low:st.filter(s=>s.qty>0&&s.alert)},top:Object.values(top).sort((a,b)=>b.qty-a.qty||b.ca-a.ca).slice(0,5),dormant,pos,
+    cashGaps:e.cash.filter(c=>c.totalGap).slice(0,5),threshold:50}},
+  // ---- Espace livreur ----
+  'GET /api/erp/livreur':(q,b,u)=>{if(u?.role!=='livreur')throw[403,'Réservé aux livreurs'];const e=E(),td=dayOf(Date.now());
+   const L=e.sales.filter(s=>s.delivery?.courier===u.courier&&(s.status==='en livraison'||dayOf(s.delivery.done||s.delivery.out)===td)).map(sv);
+   const cash={'espèces':0,Wave:0,'Orange Money':0};L.filter(s=>s.paid&&dayOf(s.paid.date)===td).forEach(s=>cash[s.paid.method]+=s.paid.amount);
+   return{courier:e.couriers.find(c=>c.id===u.courier)||null,sales:L,cash,fees:L.filter(s=>s.status!=='en livraison').reduce((a,s)=>a+(s.delivery.fee||0),0)}},
+  'POST /api/erp/livreur/status':(q,b,u)=>{if(u?.role!=='livreur')throw[403,'Réservé aux livreurs'];const sa=E().sales.find(x=>x.id===b.id);
+   if(!sa||sa.delivery?.courier!==u.courier||sa.status!=='en livraison')throw[403,'Livraison non attribuée'];if(!['livrée/payée','refusée','retournée'].includes(b.status))throw[400,'Statut invalide'];
+   if(b.status!=='livrée/payée'&&!String(b.reason||'').trim())throw[400,'Motif obligatoire'];return routes['POST /api/erp/sale/status'](q,{...b,_lv:1},{...u,role:'admin',name:u.name+' (livreur)'})},
   'POST /api/erp/demo':(q,b,u)=>{if(u?.role!=='admin')throw[403,'Réservé à l\'admin'];const r=demo(u,b.purge);S();return r},
  });
  // Données de démo : 10 produits suivis en stock + 2 commandes 1688 (1 réceptionnée avec litige, 1 à réceptionner)
@@ -228,16 +249,17 @@ module.exports=function(routes,X){
   const FIN=['livrée/payée','livrée/payée','livrée/payée','livrée/payée','livrée/payée','livrée/payée','livrée/payée','refusée','retournée','en livraison','en livraison','préparée','confirmée','nouvelle','nouvelle'];
   const PATH=['nouvelle','confirmée','préparée','en livraison'],PAY=['espèces','Wave','Orange Money'],stocked=S1.filter(s=>s.qty>3);
   CL.forEach(([name,addr],k)=>{const s=stocked[k%stocked.length],p=prod(s.pid),qty=k%4===0?2:1,price=p.tiers?.[0]?.price||4500,c=CR[k%3];
-   const sa={id:id(),demo:true,no:(k%3?'WA':'UP')+String(4100+k),source:k%3?'whatsapp':'site',date:d0-864e5*(14-k),name,phone:'77 '+(500+k*7)+' '+(10+k)+' '+(20+k),address:addr+', Dakar',zone:c.zone.split(' / ')[0],note:'',items:[{pid:p.id,name:p.name,variant:s.variant,qty,price}],status:'nouvelle',dates:{nouvelle:d0-864e5*(14-k)},by:'démo'};e.sales.push(sa);
+   const sa={id:id(),demo:true,no:(k%3?'WA':'UP')+String(4100+k),source:k%3?'whatsapp':'site',date:d0-864e5*(k<7?6-k:Math.max(0,14-k))-36e5*3,name,phone:'77 '+(500+k*7)+' '+(10+k)+' '+(20+k),address:addr+', Dakar',zone:c.zone.split(' / ')[0],note:'',items:[{pid:p.id,name:p.name,variant:s.variant,qty,price}],status:'nouvelle',dates:{nouvelle:d0-864e5*(k<7?6-k:Math.max(0,14-k))},by:'démo'};e.sales.push(sa);
    const tgt=FIN[k],steps=[...PATH.slice(1,(PATH.includes(tgt)?PATH.indexOf(tgt):3)+1),...(['livrée/payée','refusée','retournée'].includes(tgt)?[tgt]:[])];
    for(const st of steps)routes['POST /api/erp/sale/status']({},{id:sa.id,status:st,courier:c.id,zone:sa.zone,fee:[1500,2000,2500][k%3],method:PAY[k%3],reason:tgt==='refusée'?'Client injoignable':tgt==='retournée'?'Taille trop petite':''},u)});
-  e.sales.filter(s=>s.demo&&s.paid).forEach(s=>{s.paid.date=Math.min(d0,s.date+864e5);s.dates['livrée/payée']=s.paid.date;if(s.delivery)s.delivery.done=s.paid.date});
+  e.sales.filter(s=>s.demo&&s.paid).forEach(s=>{s.paid.date=Math.min(d0,s.date+36e5*2);s.dates['livrée/payée']=s.paid.date;if(s.delivery)s.delivery.done=s.paid.date});
   const days=[...new Set(e.sales.filter(s=>s.demo&&s.paid).map(s=>dayOf(s.paid.date)))];
   let gapDone=0;days.forEach((d,k)=>{const r=routes['GET /api/erp/cash']({day:d},{},u).rows;r.forEach((c,j)=>{const rem={...c.expected};const gp=!gapDone&&k>0&&rem['espèces']>=1000;if(gp){rem['espèces']-=1000;gapDone=1}
    const st=routes['POST /api/erp/cash']({},{day:d,courier:c.courier,remitted:rem,note:gp?'Démo : manque 1 000 F, à récupérer':''},u);st.demo=true})});
   [['fret',112500,'Fret aérien commande 3921457788012',13],['transitaire',15000,'Frais de dossier transitaire',12],['publicité Facebook',25000,'Campagne pantoufles 7 jours',10],['publicité Facebook',15000,'Boost post carrousel',4],
    ['transport',5000,'Taxi entrepôt → bureau',9],['transport',3000,'Course livraison urgente',3],['salaires',60000,'Préparateur commandes (quinzaine)',2],['autres',4500,'Sachets et étiquettes',6]].forEach(([cat,amount,label,ago])=>{
    const x={id:id(),demo:true,created:d0,day:dayOf(d0-864e5*ago),cat,amount,label,po:'',pay:'',user:u.name};e.expenses.push(x)});e.expenses.sort((a,b)=>b.day.localeCompare(a.day));
+  const dz=S1.filter(s=>!e.moves.some(m=>m.sid===s.id&&m.type==='vente')).slice(-2);dz.forEach(s=>e.moves.filter(m=>m.sid===s.id).forEach(m=>m.date=d0-864e5*75));
   e.sales.sort((a,b)=>b.date-a.date);e.moves.forEach(m=>{if(S1.some(s=>s.id===m.sid))m.demo=true});
   audit(u,'Chargement données de démo','',ps.length+' produits, 2 commandes 1688, 15 ventes');return{ok:true}}
  return{E,audit,can,move,getStock};

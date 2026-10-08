@@ -32,7 +32,7 @@ let db=fs.existsSync(DB)?JSON.parse(fs.readFileSync(DB)):seed();db.zones=defZone
 let st=null;const save=()=>{fs.writeFileSync(DB,JSON.stringify(db,null,1));if(RU&&RT){clearTimeout(st);st=setTimeout(()=>rcall(['SET','up-db',JSON.stringify(db)]).catch(e=>console.error('Redis',e.message)),800)}};
 const boot=async()=>{if(RU&&RT){try{const v=await rcall(['GET','up-db']);if(v){db=JSON.parse(v);db.zones=defZones();console.log('Données chargées depuis Redis')}}catch(e){console.error('Redis indisponible',e.message)}}
  if(process.env.ADMIN_PASS){const a=db.users.find(u=>u.role==='admin');if(a)a.pass=hash(process.env.ADMIN_PASS)}save()};
-const pub=u=>u&&({id:u.id,name:u.name,email:u.email,role:u.role,country:u.country,verified:u.verified,years:u.years});
+const pub=u=>u&&({courier:u.courier,id:u.id,name:u.name,email:u.email,role:u.role,country:u.country,verified:u.verified,years:u.years});
 const priceFor=(p,q)=>[...p.tiers].reverse().find(t=>q>=t.min)?.price??p.tiers[0].price;
 const withSeller=p=>({...p,sellerInfo:pub(db.users.find(u=>u.id===p.seller)),reviews:db.reviews.filter(r=>r.product===p.id)});
 const routes={
@@ -86,8 +86,8 @@ const fmtDate=t=>new Intl.DateTimeFormat('fr-FR',{timeZone:'Africa/Dakar',day:'2
 require('./erp.js')(routes,{db:()=>db,save:()=>save(),pub,fmtDate});
 const STAFF=['stock','commercial','comptable','livreur'];
 routes['GET /api/erp/users']=(q,b,u)=>{need(u,'admin');return db.users.filter(x=>x.role==='admin'||STAFF.includes(x.role)).map(pub)};
-routes['POST /api/erp/users']=(q,b,u)=>{need(u,'admin');if(!STAFF.includes(b.role))throw[400,'Rôle invalide'];if(!b.email||!b.name||String(b.pass||'').length<8)throw[400,'Nom, email et mot de passe (8 car. min) requis'];
- let x=db.users.find(v=>v.email===b.email);if(x&&x.role==='admin')throw[400,'Compte admin non modifiable'];if(!x){x={id:id(),country:'Sénégal'};db.users.push(x)}Object.assign(x,{name:b.name,email:b.email,role:b.role,pass:hash(b.pass)});save();return pub(x)};
+routes['POST /api/erp/users']=(q,b,u)=>{need(u,'admin');if(!STAFF.includes(b.role))throw[400,'Rôle invalide'];if(!b.email||!b.name||String(b.pass||'').length<8)throw[400,'Nom, email et mot de passe (8 car. min) requis'];if(b.role==='livreur'&&!db.erp?.couriers?.some(c=>c.id===b.courier))throw[400,'Choisis la fiche livreur à relier au compte'];
+ let x=db.users.find(v=>v.email===b.email);if(x&&x.role==='admin')throw[400,'Compte admin non modifiable'];if(!x){x={id:id(),country:'Sénégal'};db.users.push(x)}Object.assign(x,{name:b.name,email:b.email,role:b.role,pass:hash(b.pass),courier:b.role==='livreur'?String(b.courier||''):undefined});save();return pub(x)};
 routes['POST /api/erp/users/delete']=(q,b,u)=>{need(u,'admin');db.users=db.users.filter(x=>!(x.id===b.id&&STAFF.includes(x.role)));save();return{ok:true}};
 // Sauvegarde quotidienne de la base (Redis up-db-backup-AAAAMMJJ, 30 jours) + copie locale
 const backup=async()=>{const k=new Date().toISOString().slice(0,10).replace(/-/g,'');db.lastBackup=Date.now();fs.writeFileSync(path.join(__dirname,'backup-'+k+'.json'),JSON.stringify(db));
