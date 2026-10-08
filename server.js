@@ -39,7 +39,7 @@ const pub=u=>u&&({courier:u.courier,id:u.id,name:u.name,email:u.email,role:u.rol
 const priceFor=(p,q)=>[...p.tiers].reverse().find(t=>q>=t.min)?.price??p.tiers[0].price;
 const withSeller=p=>({...p,sellerInfo:pub(db.users.find(u=>u.id===p.seller)),reviews:db.reviews.filter(r=>r.product===p.id)});
 const routes={
- 'GET /api/meta':()=>({settings:{whatsapp:db.settings?.whatsapp||''},zones:db.zones,cats:db.cats.map(c=>({...c,count:db.products.filter(p=>p.cat===c.id&&!p.draft).length})),sellers:db.users.filter(u=>u.role==='admin').map(pub)}),
+ 'GET /api/meta':()=>({settings:{whatsapp:db.settings?.whatsapp||'',pixel:db.settings?.pixel||''},zones:db.zones,cats:db.cats.map(c=>({...c,count:db.products.filter(p=>p.cat===c.id&&!p.draft).length})),sellers:db.users.filter(u=>u.role==='admin').map(pub)}),
  'GET /api/products':(q,b,u)=>{let r=u?.role==='admin'&&q.all?db.products:db.products.filter(p=>!p.draft);
   if(q.q){const s=q.q.toLowerCase();r=r.filter(p=>(p.name+p.desc).toLowerCase().includes(s))}
   if(q.cat)r=r.filter(p=>p.cat===q.cat);if(q.seller)r=r.filter(p=>p.seller===q.seller);
@@ -88,6 +88,8 @@ const routes={
 const fmtDate=t=>new Intl.DateTimeFormat('fr-FR',{timeZone:'Africa/Dakar',day:'2-digit',month:'2-digit',year:'numeric'}).format(t);
 const ERP=require('./erp.js')(routes,{img:UPL,db:()=>db,save:()=>save(),pub,fmtDate});
 const STAFF=['stock','commercial','comptable','livreur','logistique'];
+routes['GET /api/erp/pixel']=(q,b,u)=>{need(u,'admin');return{pixel:db.settings?.pixel||''}};
+routes['POST /api/erp/pixel']=(q,b,u)=>{need(u,'admin');const p=String(b.pixel||'').replace(/\D/g,'');if(p&&(p.length<10||p.length>20))throw[400,'Identifiant de pixel invalide (15 à 16 chiffres en général)'];db.settings={...db.settings,pixel:p};save();return{pixel:p}};
 routes['GET /api/erp/users']=(q,b,u)=>{need(u,'admin');return db.users.filter(x=>x.role==='admin'||STAFF.includes(x.role)).map(pub)};
 routes['POST /api/erp/users']=(q,b,u)=>{need(u,'admin');if(!STAFF.includes(b.role))throw[400,'Rôle invalide'];if(!b.email||!b.name||String(b.pass||'').length<8)throw[400,'Nom, email et mot de passe (8 car. min) requis'];if(b.role==='livreur'&&!db.erp?.couriers?.some(c=>c.id===b.courier))throw[400,'Choisis la fiche livreur à relier au compte'];
  let x=db.users.find(v=>v.email===b.email);if(x&&x.role==='admin')throw[400,'Compte admin non modifiable'];if(!x){x={id:id(),country:'Sénégal'};db.users.push(x)}Object.assign(x,{name:b.name,email:b.email,role:b.role,pass:hash(b.pass),courier:b.role==='livreur'?String(b.courier||''):undefined});save();return pub(x)};
