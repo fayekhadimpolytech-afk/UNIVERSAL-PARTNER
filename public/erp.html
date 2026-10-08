@@ -1,0 +1,131 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ERP — Gestion UP</title>
+<style>
+:root{--ink:#1d1a17;--rose:#e8607a;--mute:#7b716a;--line:#eadfd3;--bg:#fff8f2;--ok:#1f9d6b;--red:#d63a3a;--amber:#d98a00}
+*{box-sizing:border-box}body{margin:0;font:15px/1.45 system-ui,Inter,sans-serif;background:var(--bg);color:var(--ink)}
+header{position:sticky;top:0;z-index:5;background:var(--ink);color:#fff;padding:10px 14px;display:flex;align-items:center;gap:10px}
+header b{font-size:17px}header .sp{flex:1}header small{opacity:.75}
+nav{display:flex;gap:6px;overflow-x:auto;padding:8px 10px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:46px;z-index:4}
+nav a{white-space:nowrap;padding:8px 13px;border-radius:99px;background:#f4ece4;cursor:pointer;font-weight:600;font-size:14px}nav a.on{background:var(--rose);color:#fff}
+main{padding:12px;max-width:1100px;margin:auto}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:10px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.row>*{flex:1 1 140px}
+input,select,textarea,button{font:inherit;padding:10px 12px;border-radius:10px;border:1.5px solid var(--line);background:#fff;width:100%}
+button{background:var(--ink);color:#fff;border:0;font-weight:600;cursor:pointer;width:auto}button.g{background:#fff;color:var(--ink);border:1.5px solid var(--ink)}button.r{background:var(--rose)}button:disabled{opacity:.5}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:10px}.kpi div{background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px}.kpi b{display:block;font-size:19px}
+.it{display:flex;gap:10px;align-items:center}.it img{width:46px;height:46px;border-radius:8px;object-fit:cover;background:#eee}.it .t{flex:1;min-width:0}
+.badge{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:700;background:#eee}.b-red{background:#fde2e2;color:var(--red)}.b-ok{background:#ddf4ea;color:var(--ok)}.b-am{background:#fff0d1;color:var(--amber)}
+.mute{color:var(--mute);font-size:13px}h2{margin:6px 0 10px;font-size:20px}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:7px 5px;border-bottom:1px solid var(--line);text-align:left}
+.pos{color:var(--ok);font-weight:700}.neg{color:var(--red);font-weight:700}
+#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:11px 18px;border-radius:99px;display:none;z-index:9;max-width:92%}
+dialog{border:0;border-radius:16px;padding:16px;width:min(560px,96vw);max-height:90vh}dialog::backdrop{background:#0007}
+.grid3{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.grid3 input{padding:8px}
+@media(min-width:800px){main{padding:18px}}
+</style></head><body>
+<header><b>⚙️ ERP Gestion UP</b><span class="sp"></span><small id="who"></small><button class="g" style="padding:6px 10px" onclick="logout()">Sortir</button></header>
+<nav id="nav"></nav><main id="m">Chargement…</main><div id="toast"></div><dialog id="dlg"></dialog>
+<script>
+const $=s=>document.querySelector(s),T=localStorage.t;let ME=null,P=[],TAB=location.hash.slice(1)||'stock';
+const F=n=>new Intl.NumberFormat('fr-FR',{maximumFractionDigits:0}).format(Math.round(n||0))+' FCFA',N=n=>new Intl.NumberFormat('fr-FR').format(Math.round(n||0));
+const D=t=>t?new Intl.DateTimeFormat('fr-FR',{timeZone:'Africa/Dakar',day:'2-digit',month:'2-digit',year:'numeric'}).format(t):'',DH=t=>t?D(t)+' '+new Intl.DateTimeFormat('fr-FR',{timeZone:'Africa/Dakar',hour:'2-digit',minute:'2-digit'}).format(t):'';
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const toast=m=>{const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(t._t);t._t=setTimeout(()=>t.style.display='none',3000)};
+async function api(p,b){const H={'Content-Type':'application/json',Authorization:'Bearer '+(localStorage.t||'')};const rd=async r=>{const t=await r.text();try{return[r,JSON.parse(t)]}catch{return null}};let x=null;
+ try{x=await rd(await fetch('api/'+p,{method:b?'POST':'GET',headers:H,body:b&&JSON.stringify(b)}))}catch{}
+ if(!x){const sp=p.includes('?')?'&':'?';try{x=await rd(await fetch('api/'+p+sp+'_t='+encodeURIComponent(localStorage.t||'')+(b?'&_m=POST&_b='+encodeURIComponent(JSON.stringify(b)):'')))}catch{}}
+ if(!x)throw'Connexion interrompue';if(!x[0].ok)throw x[1].error;return x[1]}
+function csv(name,head,rows){const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';const s='\ufeff'+[head,...rows].map(r=>r.map(q).join(';')).join('\r\n');
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([s],{type:'text/csv;charset=utf-8'}));a.download=name+'-'+D(Date.now()).replace(/\//g,'-')+'.csv';a.click()}
+function logout(){delete localStorage.t;location.href='/'}
+function loginForm(msg){$('#nav').innerHTML='';$('#m').innerHTML=`<div class="card" style="max-width:380px;margin:30px auto"><h2>Connexion ERP</h2><p class="mute">${esc(msg||'Même identifiants que Gestion UP.')}</p>
+ <form onsubmit="event.preventDefault();doLogin(this)"><input name="email" type="email" placeholder="Email" required style="margin-bottom:8px"><input name="pass" type="password" placeholder="Mot de passe" required style="margin-bottom:8px"><button style="width:100%">Se connecter</button></form></div>`}
+async function doLogin(f){try{const d=await api('login',{email:f.email.value,pass:f.pass.value});localStorage.t=d.token;boot()}catch(e){toast(e)}}
+const TABS=[['stock','📦 Stock'],['recep','🚚 Réceptions'],['litiges','⚠️ Litiges'],['moves','🔁 Mouvements'],['inv','📋 Inventaire'],['audit','🕵️ Journal'],['users','👥 Équipe',1]];
+function nav(){$('#nav').innerHTML=TABS.filter(t=>!t[2]||ME.user.role==='admin').map(([k,l])=>`<a class="${k===TAB?'on':''}" onclick="go('${k}')">${l}</a>`).join('')}
+function go(k){TAB=k;location.hash=k;nav();render()}
+async function boot(){try{ME=await api('erp/me')}catch(e){return loginForm(e==='Connexion requise'?'':e)}
+ $('#who').textContent=ME.user.name+' · '+ME.roles[ME.user.role];P=await api('erp/products');nav();render()}
+const W=()=>ME.write;
+async function render(){const m=$('#m');try{m.innerHTML=await V[TAB]()}catch(e){m.innerHTML='<div class="card">'+esc(e)+'</div>'}}
+const opt=(arr,sel)=>arr.map(([v,l])=>`<option value="${esc(v)}" ${v===sel?'selected':''}>${esc(l)}</option>`).join('');
+const V={
+async stock(){const q=$('#sq')?.value||'',al=$('#sal')?.checked;const d=await api('erp/stock?q='+encodeURIComponent(q)+(al?'&alert=1':''));window._st=d.rows;
+ return `<div class="kpi"><div><span class="mute">Valeur du stock (CMP)</span><b>${F(d.total.value)}</b></div><div><span class="mute">Pièces en stock</span><b>${N(d.total.qty)}</b></div><div><span class="mute">Alertes réappro</span><b class="${d.total.alerts?'neg':''}">${d.total.alerts}</b></div><div><span class="mute">Ruptures</span><b class="${d.total.outs?'neg':''}">${d.total.outs}</b></div></div>
+ <div class="card row"><input id="sq" placeholder="Rechercher produit, variante, emplacement" value="${esc(q)}" onchange="render()"><label style="flex:0 0 auto"><input type="checkbox" id="sal" style="width:auto" ${al?'checked':''} onchange="render()"> Alertes seules</label>
+ ${W()?'<button style="flex:0 0 auto" onclick="newStock()">+ Variante</button>':''}<button class="g" style="flex:0 0 auto" onclick="csv(\'stock\',[\'Produit\',\'Variante\',\'Emplacement\',\'Quantité\',\'Seuil\',\'CMP FCFA\',\'Valeur FCFA\'],_st.map(s=>[s.product,s.variant,s.loc,s.qty,s.min,s.cmp,s.value]))">⬇ CSV</button></div>
+ ${d.rows.map(s=>`<div class="card it">${s.img?`<img src="${esc(s.img)}">`:'<img>'}<div class="t"><b>${esc(s.product)}</b> ${s.variant?'<span class="mute">· '+esc(s.variant)+'</span>':''}<br>
+  <span class="mute">📍 ${esc(s.loc)} · CMP ${F(s.cmp)} · valeur ${F(s.value)}</span><br>
+  ${s.qty<=0?'<span class="badge b-red">Rupture — épuisé sur le site</span>':s.alert?'<span class="badge b-am">Sous le seuil ('+s.min+')</span>':'<span class="badge b-ok">OK</span>'}</div>
+  <div style="text-align:right"><b style="font-size:20px">${N(s.qty)}</b>${W()?`<br><button class="g" style="padding:6px 10px;margin-top:4px" onclick="mv('${s.id}')">Mouvement</button>`:''}</div></div>`).join('')||'<div class="card mute">Aucune ligne de stock. Ajoute une variante ou charge les données de démo (onglet Équipe).</div>'}`},
+async recep(){const pos=await api('erp/pos');window._pos=pos;
+ return `<div class="card row"><h2 style="flex:1 1 auto;margin:0">Commandes à réceptionner</h2>${W()?'<button style="flex:0 0 auto" onclick="newPO()">+ Arrivage</button>':''}<button class="g" style="flex:0 0 auto" onclick="csv(\'receptions\',[\'N° 1688\',\'Fournisseur\',\'Mode\',\'Statut\',\'Produit\',\'Commandé\',\'Reçu\',\'Conforme\',\'Abîmé\',\'Manquant\',\'Coût unitaire\'],_pos.flatMap(p=>p.lines.map(l=>[p.no,p.supplier,p.mode,p.status,lab(l),l.qty,l.recv,l.ok||0,l.damaged||0,l.missing||0,l.unitCost])))">⬇ CSV</button></div>
+ <p class="mute">Le cycle complet des commandes 1688 (brouillon → clôturée) et le calcul du coût de revient arrivent à l'étape 2. Ici : réception ligne par ligne.</p>
+ ${pos.map(p=>`<div class="card"><div class="row"><div><b>${esc(p.no||'Sans n°')}</b> · ${esc(p.supplier)}<br><span class="mute">${p.mode==='maritime'?'🚢 Maritime':'✈️ Aérien'} · créée le ${D(p.created)}</span></div>
+  <div style="flex:0 0 auto"><span class="badge ${/totale/.test(p.status)?'b-ok':/partielle/.test(p.status)?'b-am':''}">${esc(p.status)}</span></div></div>
+  <table><tr><th>Article</th><th>Cmd</th><th>Reçu</th><th>Coût u.</th></tr>${p.lines.map(l=>`<tr><td>${esc(lab(l))}</td><td>${l.qty}</td><td>${l.recv}${l.damaged?' <span class="neg">('+l.damaged+' abîmé)</span>':''}${l.missing?' <span class="neg">('+l.missing+' manq.)</span>':''}</td><td>${F(l.unitCost)}</td></tr>`).join('')}</table>
+  ${p.receptions.map(r=>`<p class="mute">Réception du ${DH(r.date)} par ${esc(r.user)}${r.note?' — '+esc(r.note):''} ${r.photos.map(f=>`<a href="${f}" target="_blank">📷</a>`).join(' ')}</p>`).join('')}
+  ${W()&&p.lines.some(l=>!l.closed&&l.recv<l.qty)?`<button class="r" onclick="recv('${p.id}')">Réceptionner</button>`:''}</div>`).join('')||'<div class="card mute">Aucune commande.</div>'}`},
+async litiges(){const ds=await api('erp/disputes');window._ds=ds;
+ return `<div class="card row"><h2 style="flex:1 1 auto;margin:0">Litiges fournisseurs</h2><button class="g" style="flex:0 0 auto" onclick="csv('litiges',['Date','N° 1688','Fournisseur','Statut','Détail','Valeur FCFA'],_ds.map(d=>[D(d.date),d.poNo,d.supplier,d.status,d.lines.map(l=>l.label+' abîmé '+l.damaged+' manquant '+l.missing).join(' | '),d.value]))">⬇ CSV</button></div>
+ ${ds.map(d=>`<div class="card"><div class="row"><div><b>${esc(d.poNo||d.po)}</b> · ${esc(d.supplier)}<br><span class="mute">ouvert le ${D(d.date)} · valeur ${F(d.value)}</span></div><span class="badge ${d.status==='clos'||d.status==='remboursé'?'b-ok':'b-red'}" style="flex:0 0 auto">${esc(d.status)}</span></div>
+  <ul>${d.lines.map(l=>`<li>${esc(l.label)} : ${l.damaged} abîmé(s), ${l.missing} manquant(s) — ${F(l.value)}</li>`).join('')}</ul>${d.photos.map(f=>`<a href="${f}" target="_blank"><img src="${f}" style="width:70px;height:70px;object-fit:cover;border-radius:8px;display:inline-block"></a>`).join(' ')}
+  ${d.notes.map(n=>`<p class="mute">${DH(n.date)} ${esc(n.user)} : ${esc(n.text)}</p>`).join('')}
+  ${W()?`<form class="row" onsubmit="event.preventDefault();dsp('${d.id}',this)"><select name="s">${opt(['ouvert','réclamé','remboursé','avoir','clos'].map(x=>[x,x]),d.status)}</select><input name="n" placeholder="Note (réclamation envoyée…)"><button style="flex:0 0 auto">Mettre à jour</button></form>`:''}</div>`).join('')||'<div class="card mute">Aucun litige 👍</div>'}`},
+async moves(){const t=$('#mt')?.value||'';const ms=await api('erp/moves?type='+t);window._ms=ms;
+ return `<div class="card row"><select id="mt" onchange="render()">${opt([['','Tous les mouvements'],['réception','Réception'],['vente','Vente'],['retour','Retour'],['casse','Casse'],['ajustement','Ajustement']],t)}</select><button class="g" style="flex:0 0 auto" onclick="csv('mouvements',['Date','Type','Article','Quantité','Coût u.','Motif','Auteur'],_ms.map(m=>[DH(m.date),m.type,m.label,m.qty,m.cost,m.reason,m.user]))">⬇ CSV</button></div>
+ <div class="card"><table><tr><th>Date</th><th>Article</th><th>Qté</th><th>Motif / auteur</th></tr>${ms.map(m=>`<tr><td>${DH(m.date)}<br><span class="badge">${esc(m.type)}</span></td><td>${esc(m.label)}</td><td class="${m.qty>0?'pos':'neg'}">${m.qty>0?'+':''}${m.qty}</td><td>${esc(m.reason)}<br><span class="mute">${esc(m.user)}</span></td></tr>`).join('')}</table></div>`},
+async inv(){const iv=await api('erp/inventories');const cur=iv.find(i=>i.status==='en cours');window._iv=cur;
+ if(!cur)return `<div class="card"><h2>Inventaire physique</h2><p class="mute">Fige les quantités théoriques, compte en rayon, affiche les écarts puis ajuste le stock à la validation.</p>${W()?'<button class="r" onclick="invStart()">Démarrer un inventaire</button>':''}</div>
+  ${iv.map(i=>`<div class="card"><b>Inventaire du ${D(i.date)}</b> · ${esc(i.user)} · ${i.lines.filter(l=>l.gap).length} écart(s)<table>${i.lines.filter(l=>l.gap).map(l=>`<tr><td>${esc(l.label)}</td><td>théorique ${l.expected}</td><td>compté ${l.counted}</td><td class="${l.gap>0?'pos':'neg'}">${l.gap>0?'+':''}${l.gap} (${F(l.gap*l.cmp)})</td></tr>`).join('')}</table></div>`).join('')}`;
+ const g=cur.lines.filter(l=>l.counted!=null&&l.counted!==l.expected);
+ return `<div class="card"><h2>Inventaire en cours (${D(cur.date)})</h2><p class="mute">${cur.lines.filter(l=>l.counted!=null).length}/${cur.lines.length} lignes comptées · ${g.length} écart(s) · ${F(g.reduce((a,l)=>a+(l.counted-l.expected)*l.cmp,0))}</p>
+ <table><tr><th>Article</th><th>Théorique</th><th>Compté</th><th>Écart</th></tr>${cur.lines.map(l=>{const e=l.counted==null?'':l.counted-l.expected;return `<tr><td>${esc(l.label)}<br><span class="mute">📍 ${esc(l.loc)}</span></td><td>${l.expected}</td><td><input type="number" min="0" inputmode="numeric" data-sid="${l.sid}" value="${l.counted??''}" style="width:80px" ${W()?'':'disabled'}></td><td class="${e>0?'pos':e<0?'neg':''}">${e===''?'':e>0?'+'+e:e}</td></tr>`}).join('')}</table>
+ ${W()?'<div class="row" style="margin-top:10px"><button class="g" onclick="invSave()">Enregistrer les comptages</button><button class="r" onclick="invSave(1)">Valider et ajuster le stock</button></div>':''}</div>`},
+async audit(){const a=await api('erp/audit');window._au=a;return `<div class="card row"><h2 style="flex:1 1 auto;margin:0">Journal d'audit</h2><button class="g" style="flex:0 0 auto" onclick="csv('journal',['Date','Utilisateur','Rôle','Action','Objet','Détail'],_au.map(x=>[DH(x.date),x.user,x.role,x.action,x.obj,x.detail]))">⬇ CSV</button></div>
+ <div class="card"><table>${a.map(x=>`<tr><td>${DH(x.date)}<br><span class="mute">${esc(x.user)}</span></td><td><b>${esc(x.action)}</b> ${esc(x.obj)}<br><span class="mute">${esc(x.detail)}</span></td></tr>`).join('')}</table></div>`},
+async users(){const us=await api('erp/users');return `<div class="card"><h2>Équipe et rôles</h2>${us.map(u=>`<div class="row" style="border-bottom:1px solid var(--line);padding:6px 0"><div><b>${esc(u.name)}</b><br><span class="mute">${esc(u.email)}</span></div><span class="badge" style="flex:0 0 auto">${esc(ME.roles[u.role])}</span>${u.role!=='admin'?`<button class="g" style="flex:0 0 auto;padding:6px 10px" onclick="delU('${u.id}')">Retirer</button>`:''}</div>`).join('')}
+ <h3>Ajouter / modifier un membre</h3><form class="row" onsubmit="event.preventDefault();addU(this)"><input name="name" placeholder="Nom" required><input name="email" type="email" placeholder="Email" required><input name="pass" type="text" placeholder="Mot de passe (8+)" required><select name="role">${opt(Object.entries(ME.roles).filter(r=>r[0]!=='admin'))}</select><button style="flex:0 0 auto">Enregistrer</button></form></div>
+ <div class="card"><h2>Données de démo et sauvegarde</h2><div class="row"><button onclick="demo()">Charger la démo</button><button class="g" onclick="demo(1)">Purger la démo</button><button class="g" onclick="bk()">Sauvegarder maintenant</button></div></div>`},
+};
+const lab=l=>(P.find(p=>p.id===l.pid)?.name||'?')+(l.variant?' — '+l.variant:'');
+const dlg=h=>{const d=$('#dlg');d.innerHTML=h+'<button class="g" style="margin-top:8px;width:100%" onclick="dlg_c()">Fermer</button>';d.showModal()},dlg_c=()=>$('#dlg').close();
+const pOpts=()=>P.map(p=>`<option value="${p.id}">${esc(p.name)}${p.draft?' (brouillon)':''}</option>`).join('');
+function vOpts(pid){const p=P.find(x=>x.id===pid);return ['',...(p?.sizes||[]).map(s=>'Taille '+s),...(p?.colors||[])].map(v=>`<option value="${esc(v)}">${v?esc(v):'— sans variante —'}</option>`).join('')}
+function newStock(){dlg(`<h2>Nouvelle variante en stock</h2><form onsubmit="event.preventDefault();saveStock(this)"><select name="pid" onchange="this.form.v.innerHTML=vOpts(this.value)" required><option value="">Produit…</option>${pOpts()}</select>
+ <div class="row" style="margin-top:6px"><select name="v"></select><input name="custom" placeholder="ou variante libre (ex. Rouge / 38)"></div><div class="row" style="margin-top:6px"><input name="loc" placeholder="Emplacement" value="Entrepôt Dakar"><input name="min" type="number" placeholder="Seuil d'alerte" value="3"></div>
+ <div class="row" style="margin-top:6px"><input name="qty" type="number" placeholder="Stock initial" value="0"><input name="cost" type="number" placeholder="Coût unitaire FCFA"></div><button style="margin-top:8px;width:100%">Créer</button></form>`)}
+async function saveStock(f){try{await api('erp/stock',{pid:f.pid.value,variant:f.custom.value||f.v.value,loc:f.loc.value,min:f.min.value,qty:f.qty.value,cost:f.cost.value});dlg_c();toast('Variante créée');render()}catch(e){toast(e)}}
+function mv(sid){const s=_st.find(x=>x.id===sid);dlg(`<h2>${esc(s.label)}</h2><p class="mute">Stock actuel : ${s.qty} · CMP ${F(s.cmp)}</p><form onsubmit="event.preventDefault();doMv('${sid}',this)">
+ <select name="type" onchange="this.form.dir.style.display=this.value==='ajustement'?'':'none'">${opt([['vente','Vente (sortie)'],['retour','Retour client (entrée)'],['casse','Casse (sortie)'],['ajustement','Ajustement']])}</select>
+ <select name="dir" style="display:none;margin-top:6px">${opt([['in','+ Entrée'],['out','− Sortie']])}</select><input name="qty" type="number" min="1" placeholder="Quantité" required style="margin-top:6px"><input name="reason" placeholder="Motif (obligatoire)" required style="margin-top:6px">
+ <div class="row" style="margin-top:6px"><input name="loc" placeholder="Emplacement" value="${esc(s.loc)}"><input name="min" type="number" placeholder="Seuil" value="${s.min}"></div><button style="margin-top:8px;width:100%">Enregistrer</button></form>`)}
+async function doMv(sid,f){try{const s=_st.find(x=>x.id===sid);if(f.loc.value!==s.loc||+f.min.value!==s.min)await api('erp/stock/edit',{id:sid,loc:f.loc.value,min:f.min.value});
+ await api('erp/move',{sid,type:f.type.value,dir:f.dir.value,qty:f.qty.value,reason:f.reason.value});dlg_c();toast('Mouvement enregistré');render()}catch(e){toast(e)}}
+function newPO(){dlg(`<h2>Arrivage à réceptionner</h2><p class="mute">Saisie rapide d'une commande arrivée à Dakar (le module complet des commandes 1688 vient à l'étape 2).</p><form onsubmit="event.preventDefault();savePO(this)">
+ <div class="row"><input name="no" placeholder="N° commande 1688"><input name="supplier" placeholder="Fournisseur"></div><select name="mode" style="margin-top:6px">${opt([['aérien','✈️ Aérien'],['maritime','🚢 Maritime']])}</select>
+ <div id="pl"></div><button type="button" class="g" style="margin-top:6px" onclick="addPL()">+ Ligne</button><button style="margin-top:8px;width:100%">Créer</button></form>`);addPL()}
+function addPL(){const d=document.createElement('div');d.className='card';d.style.margin='6px 0';d.innerHTML=`<select class="pp" onchange="this.parentNode.querySelector('.vv').innerHTML=vOpts(this.value)" required><option value="">Produit…</option>${pOpts()}</select>
+ <div class="row" style="margin-top:4px"><select class="vv"></select><input class="qq" type="number" placeholder="Qté" required><input class="cc" type="number" placeholder="Coût de revient u. FCFA" required></div>`;$('#pl').appendChild(d)}
+async function savePO(f){try{const lines=[...f.querySelectorAll('#pl .card')].map(c=>({pid:c.querySelector('.pp').value,variant:c.querySelector('.vv').value,qty:c.querySelector('.qq').value,unitCost:c.querySelector('.cc').value}));
+ await api('erp/pos',{no:f.no.value,supplier:f.supplier.value,mode:f.mode.value,lines});dlg_c();toast('Arrivage créé');render()}catch(e){toast(e)}}
+function recv(id){const p=_pos.find(x=>x.id===id);dlg(`<h2>Réception ${esc(p.no)}</h2><p class="mute">Saisis par ligne : reçu = conforme + abîmé. Seul le conforme entre en stock, au coût de revient.</p><form onsubmit="event.preventDefault();doRecv('${id}',this)">
+ ${p.lines.filter(l=>!l.closed&&l.recv<l.qty).map(l=>`<div class="card" data-l="${l.id}" data-rest="${l.qty-l.recv}"><b>${esc(lab(l))}</b> <span class="mute">restant ${l.qty-l.recv} · ${F(l.unitCost)}/u</span>
+  <div class="grid3" style="margin-top:4px"><label class="mute">Reçu<input class="r1" type="number" min="0" value="${l.qty-l.recv}" oninput="rc(this)"></label><label class="mute">Conforme<input class="r2" type="number" min="0" value="${l.qty-l.recv}" oninput="rc(this,1)"></label><label class="mute">Abîmé<input class="r3" type="number" min="0" value="0" oninput="rc(this,1)"></label><label class="mute">Manquant<input class="r4" type="number" value="0" disabled></label></div></div>`).join('')}
+ <input name="note" placeholder="Remarque (état des cartons…)"><label class="mute" style="display:block;margin-top:6px">Photos (facultatif)<input name="ph" type="file" accept="image/*" multiple capture="environment"></label>
+ <label style="display:block;margin-top:6px"><input type="checkbox" name="fin" style="width:auto"> Réception définitive (le non reçu est déclaré manquant)</label><button class="r" style="margin-top:8px;width:100%">Valider la réception</button></form>`)}
+function rc(i,fromOk){const c=i.closest('.card'),r1=c.querySelector('.r1'),r2=c.querySelector('.r2'),r3=c.querySelector('.r3');if(fromOk)r1.value=(+r2.value||0)+(+r3.value||0);else{r2.value=Math.max(0,(+r1.value||0)-(+r3.value||0))}c.querySelector('.r4').value=Math.max(0,+c.dataset.rest-(+r1.value||0))}
+const shrink=f=>new Promise(res=>{const im=new Image();im.onload=()=>{const k=Math.min(1,1280/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*k;c.height=im.height*k;c.getContext('2d').drawImage(im,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',.8))};im.src=URL.createObjectURL(f)});
+async function doRecv(id,f){const b=f.querySelector('button.r');b.disabled=true;try{const photos=await Promise.all([...f.ph.files].slice(0,6).map(shrink));
+ const lines=[...f.querySelectorAll('[data-l]')].map(c=>({id:c.dataset.l,received:c.querySelector('.r1').value,ok:c.querySelector('.r2').value,damaged:c.querySelector('.r3').value,missing:c.querySelector('.r4').value}));
+ const r=await api('erp/receive',{po:id,lines,photos,note:f.note.value,final:f.fin.checked});dlg_c();toast(r.dispute?'Réception validée — litige ouvert ('+F(r.dispute.value)+')':'Réception validée, stock mis à jour');render()}catch(e){toast(e);b.disabled=false}}
+async function dsp(id,f){try{await api('erp/dispute',{id,status:f.s.value,note:f.n.value});toast('Litige mis à jour');render()}catch(e){toast(e)}}
+async function invStart(){try{await api('erp/inventory/start',{});render()}catch(e){toast(e)}}
+async function invSave(val){try{const counts=[...document.querySelectorAll('[data-sid]')].map(i=>({sid:i.dataset.sid,counted:i.value}));await api('erp/inventory/count',{id:_iv.id,counts});
+ if(val){if(!confirm('Valider l\'inventaire et ajuster le stock sur les quantités comptées ?'))return render();await api('erp/inventory/validate',{id:_iv.id});toast('Inventaire validé')}else toast('Comptages enregistrés');render()}catch(e){toast(e)}}
+async function addU(f){try{await api('erp/users',Object.fromEntries(new FormData(f)));toast('Membre enregistré');render()}catch(e){toast(e)}}
+async function delU(id){if(confirm('Retirer ce membre ?')){await api('erp/users/delete',{id});render()}}
+async function demo(p){try{await api('erp/demo',{purge:!!p});toast(p?'Démo purgée':'Démo chargée');P=await api('erp/products');render()}catch(e){toast(e)}}
+async function bk(){try{const r=await api('erp/backup',{});toast('Sauvegarde faite le '+DH(r.date))}catch(e){toast(e)}}
+boot();
+</script></body></html>

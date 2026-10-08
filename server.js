@@ -81,6 +81,20 @@ const routes={
  'POST /api/products/delete':(q,b,u)=>{need(u,'admin');db.products=db.products.filter(p=>!(p.id===b.id&&p.seller===u.id));save();return{ok:true}},
 };
 
+// ---- Module ERP ----
+const fmtDate=t=>new Intl.DateTimeFormat('fr-FR',{timeZone:'Africa/Dakar',day:'2-digit',month:'2-digit',year:'numeric'}).format(t);
+require('./erp.js')(routes,{db:()=>db,save:()=>save(),pub,fmtDate});
+const STAFF=['stock','commercial','comptable','livreur'];
+routes['GET /api/erp/users']=(q,b,u)=>{need(u,'admin');return db.users.filter(x=>x.role==='admin'||STAFF.includes(x.role)).map(pub)};
+routes['POST /api/erp/users']=(q,b,u)=>{need(u,'admin');if(!STAFF.includes(b.role))throw[400,'Rôle invalide'];if(!b.email||!b.name||String(b.pass||'').length<8)throw[400,'Nom, email et mot de passe (8 car. min) requis'];
+ let x=db.users.find(v=>v.email===b.email);if(x&&x.role==='admin')throw[400,'Compte admin non modifiable'];if(!x){x={id:id(),country:'Sénégal'};db.users.push(x)}Object.assign(x,{name:b.name,email:b.email,role:b.role,pass:hash(b.pass)});save();return pub(x)};
+routes['POST /api/erp/users/delete']=(q,b,u)=>{need(u,'admin');db.users=db.users.filter(x=>!(x.id===b.id&&STAFF.includes(x.role)));save();return{ok:true}};
+// Sauvegarde quotidienne de la base (Redis up-db-backup-AAAAMMJJ, 30 jours) + copie locale
+const backup=async()=>{const k=new Date().toISOString().slice(0,10).replace(/-/g,'');db.lastBackup=Date.now();fs.writeFileSync(path.join(__dirname,'backup-'+k+'.json'),JSON.stringify(db));
+ if(RU&&RT){await rcall(['SET','up-db-backup-'+k,JSON.stringify(db),'EX',String(30*86400)]).catch(e=>console.error('Backup',e.message))}};
+setInterval(()=>{if(!db.lastBackup||Date.now()-db.lastBackup>864e5)backup()},36e5);setTimeout(()=>{if(!db.lastBackup||Date.now()-db.lastBackup>864e5)backup()},6e4);
+routes['POST /api/erp/backup']=async(q,b,u)=>{need(u,'admin');await backup();return{ok:true,date:db.lastBackup}};
+
 // ---- Import 1688 via TMAPI ----
 const IMG=path.join(__dirname,'public','img');
 async function tm(pathq,body){const k=db.secrets?.tmapi;if(!k)throw[400,'Clé TMAPI non enregistrée dans Gestion UP'];
@@ -111,7 +125,7 @@ async function import1688(url,cat,u){const F=await fetchItem(url);const d=F.d,ii
   desc:name+(colors.length?'. Coloris : '+colors.join(', ')+'.':''),sold:0,created:Date.now(),draft:true,src:{site:F.site,id:iid,cny,cur:F.cur},tiers:[{min:1,price:0}]}}
 function login(u){const t=id()+id();db.sessions[t]=u.id;save();return{token:t,user:pub(u)}}
 function need(u,role){if(!u)throw[401,'Connexion requise'];if(role&&u.role!==role)throw[403,'Réservé à UP']}
-const mime={'.jpg':'image/jpeg','.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css'};
+const mime={'.png':'image/png','.jpg':'image/jpeg','.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css'};
 const srv=http.createServer((req,res)=>{const url=new URL(req.url,'http://x'),q=Object.fromEntries(url.searchParams);
  if(url.pathname.startsWith('/api/')){let body='';req.on('data',c=>body+=c);req.on('end',()=>{
   const send=(c,d)=>{res.writeHead(c,{'Content-Type':'application/json'});res.end(JSON.stringify(d))};
