@@ -1,6 +1,9 @@
 // Universal Partner — serveur Node sans dépendance (API JSON + fichiers statiques)
 const http=require('http'),fs=require('fs'),path=require('path'),crypto=require('crypto');
-const DB=path.join(__dirname,'data.json'),PORT=process.env.PORT||3000;
+// DATA_DIR (ex. /var/lib/universal-partner) : base + photos sur disque permanent ; sinon dossier de l'appli (Render)
+const DATA=process.env.DATA_DIR||__dirname,PORT=process.env.PORT||3000;const DB=path.join(DATA,'data.json');
+const UPL=process.env.DATA_DIR?path.join(DATA,'img'):path.join(__dirname,'public','img');fs.mkdirSync(UPL,{recursive:true});
+if(process.env.DATA_DIR&&!fs.existsSync(DB)&&fs.existsSync(path.join(__dirname,'data.json')))fs.copyFileSync(path.join(__dirname,'data.json'),DB);
 const id=()=>crypto.randomBytes(6).toString('hex');
 const hash=p=>crypto.createHash('sha256').update('up$'+p).digest('hex');
 const defZones=()=>[{id:'partout',name:'Livraison gratuite partout (Sénégal et international)',fee:0}];
@@ -29,7 +32,7 @@ P('Pantoufle homme cuir souple','homme',8500,1,'🥿','Cuir véritable, semelle 
 const RU=process.env.UPSTASH_REDIS_REST_URL,RT=process.env.UPSTASH_REDIS_REST_TOKEN;
 const rcall=async(cmd)=>{const r=await fetch(RU,{method:'POST',headers:{Authorization:'Bearer '+RT,'Content-Type':'application/json'},body:JSON.stringify(cmd)});return (await r.json()).result};
 let db=fs.existsSync(DB)?JSON.parse(fs.readFileSync(DB)):seed();db.zones=defZones();
-let st=null;const save=()=>{fs.writeFileSync(DB,JSON.stringify(db,null,1));if(RU&&RT){clearTimeout(st);st=setTimeout(()=>rcall(['SET','up-db',JSON.stringify(db)]).catch(e=>console.error('Redis',e.message)),800)}};
+let st=null;const save=()=>{fs.writeFileSync(DB+'.tmp',JSON.stringify(db,null,1));fs.renameSync(DB+'.tmp',DB);if(RU&&RT){clearTimeout(st);st=setTimeout(()=>rcall(['SET','up-db',JSON.stringify(db)]).catch(e=>console.error('Redis',e.message)),800)}};
 const boot=async()=>{if(RU&&RT){try{const v=await rcall(['GET','up-db']);if(v){db=JSON.parse(v);db.zones=defZones();console.log('Données chargées depuis Redis')}}catch(e){console.error('Redis indisponible',e.message)}}
  if(process.env.ADMIN_PASS){const a=db.users.find(u=>u.role==='admin');if(a)a.pass=hash(process.env.ADMIN_PASS)}save()};
 const pub=u=>u&&({courier:u.courier,id:u.id,name:u.name,email:u.email,role:u.role,country:u.country,verified:u.verified,years:u.years});
@@ -83,20 +86,20 @@ const routes={
 
 // ---- Module ERP ----
 const fmtDate=t=>new Intl.DateTimeFormat('fr-FR',{timeZone:'Africa/Dakar',day:'2-digit',month:'2-digit',year:'numeric'}).format(t);
-require('./erp.js')(routes,{db:()=>db,save:()=>save(),pub,fmtDate});
+require('./erp.js')(routes,{img:UPL,db:()=>db,save:()=>save(),pub,fmtDate});
 const STAFF=['stock','commercial','comptable','livreur'];
 routes['GET /api/erp/users']=(q,b,u)=>{need(u,'admin');return db.users.filter(x=>x.role==='admin'||STAFF.includes(x.role)).map(pub)};
 routes['POST /api/erp/users']=(q,b,u)=>{need(u,'admin');if(!STAFF.includes(b.role))throw[400,'Rôle invalide'];if(!b.email||!b.name||String(b.pass||'').length<8)throw[400,'Nom, email et mot de passe (8 car. min) requis'];if(b.role==='livreur'&&!db.erp?.couriers?.some(c=>c.id===b.courier))throw[400,'Choisis la fiche livreur à relier au compte'];
  let x=db.users.find(v=>v.email===b.email);if(x&&x.role==='admin')throw[400,'Compte admin non modifiable'];if(!x){x={id:id(),country:'Sénégal'};db.users.push(x)}Object.assign(x,{name:b.name,email:b.email,role:b.role,pass:hash(b.pass),courier:b.role==='livreur'?String(b.courier||''):undefined});save();return pub(x)};
 routes['POST /api/erp/users/delete']=(q,b,u)=>{need(u,'admin');db.users=db.users.filter(x=>!(x.id===b.id&&STAFF.includes(x.role)));save();return{ok:true}};
 // Sauvegarde quotidienne de la base (Redis up-db-backup-AAAAMMJJ, 30 jours) + copie locale
-const backup=async()=>{const k=new Date().toISOString().slice(0,10).replace(/-/g,'');db.lastBackup=Date.now();fs.writeFileSync(path.join(__dirname,'backup-'+k+'.json'),JSON.stringify(db));
+const backup=async()=>{const k=new Date().toISOString().slice(0,10).replace(/-/g,'');db.lastBackup=Date.now();const BK=path.join(DATA,'backups');fs.mkdirSync(BK,{recursive:true});fs.writeFileSync(path.join(BK,'backup-'+k+'.json'),JSON.stringify(db));fs.readdirSync(BK).filter(f=>/^backup-\d{8}\.json$/.test(f)).sort().slice(0,-30).forEach(f=>fs.unlinkSync(path.join(BK,f)));
  if(RU&&RT){await rcall(['SET','up-db-backup-'+k,JSON.stringify(db),'EX',String(30*86400)]).catch(e=>console.error('Backup',e.message))}};
 setInterval(()=>{if(!db.lastBackup||Date.now()-db.lastBackup>864e5)backup()},36e5);setTimeout(()=>{if(!db.lastBackup||Date.now()-db.lastBackup>864e5)backup()},6e4);
 routes['POST /api/erp/backup']=async(q,b,u)=>{need(u,'admin');await backup();return{ok:true,date:db.lastBackup}};
 
 // ---- Import 1688 via TMAPI ----
-const IMG=path.join(__dirname,'public','img');
+const IMG=UPL;
 async function tm(pathq,body){const k=db.secrets?.tmapi;if(!k)throw[400,'Clé TMAPI non enregistrée dans Gestion UP'];
  const r=await fetch('http://api.tmapi.top'+pathq,{method:body?'POST':'GET',body:body?JSON.stringify(body):undefined,headers:{apikey:k,'Content-Type':'application/json'},signal:AbortSignal.timeout(40000)});
  const j=await r.json().catch(()=>({}));if(j.code===4393)throw[402,'TMAPI : crédits insuffisants (forfait pas encore actif ?)'];if(j.code!==200||!j.data)throw[502,'TMAPI : '+(j.msg||j.message||('erreur '+r.status))];return j.data}
@@ -125,14 +128,15 @@ async function import1688(url,cat,u){const F=await fetchItem(url);const d=F.d,ii
   desc:name+(colors.length?'. Coloris : '+colors.join(', ')+'.':''),sold:0,created:Date.now(),draft:true,src:{site:F.site,id:iid,cny,cur:F.cur},tiers:[{min:1,price:0}]}}
 function login(u){const t=id()+id();db.sessions[t]=u.id;save();return{token:t,user:pub(u)}}
 function need(u,role){if(!u)throw[401,'Connexion requise'];if(role&&u.role!==role)throw[403,'Réservé à UP']}
-const mime={'.png':'image/png','.jpg':'image/jpeg','.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css'};
+const mime={'.webp':'image/webp','.png':'image/png','.jpg':'image/jpeg','.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css'};
 const srv=http.createServer((req,res)=>{const url=new URL(req.url,'http://x'),q=Object.fromEntries(url.searchParams);
  if(url.pathname.startsWith('/api/')){let body='';req.on('data',c=>body+=c);req.on('end',()=>{
   const send=(c,d)=>{if(d&&d.__raw){res.writeHead(c,{'Content-Type':d.__raw.type,'Content-Disposition':'inline; filename="'+d.__raw.name+'"'});return res.end(d.__raw.body)}res.writeHead(c,{'Content-Type':'application/json'});res.end(JSON.stringify(d))};
   try{let M=req.method;if(q._m){M=q._m;if(q._b&&!body)body=q._b;}const h=routes[M+' '+url.pathname];if(!h)throw[404,'Route inconnue'];
    const tok=(req.headers.authorization||'').replace('Bearer ','')||q._t||'',u=db.users.find(x=>x.id===db.sessions[tok]);
    Promise.resolve().then(()=>h(q,body?JSON.parse(body):{},u)).then(d=>send(200,d),e=>Array.isArray(e)?send(e[0],{error:e[1]}):(console.error(e),send(500,{error:'Erreur serveur'})))}catch(e){Array.isArray(e)?send(e[0],{error:e[1]}):(console.error(e),send(500,{error:'Erreur serveur'}))}});return}
- const f=path.join(__dirname,'public',url.pathname==='/'?'index.html':path.normalize(url.pathname));
+ let f=path.join(__dirname,'public',url.pathname==='/'?'index.html':path.normalize(url.pathname));
+ if(url.pathname.startsWith('/img/')){const g=path.join(UPL,path.basename(url.pathname));if(fs.existsSync(g))f=g}
  fs.readFile(fs.existsSync(f)?f:path.join(__dirname,'public/index.html'),(e,d)=>{res.writeHead(200,{'Content-Type':mime[path.extname(f)]||'text/html; charset=utf-8'});res.end(d)});
 });
 boot().then(()=>srv.listen(PORT,()=>console.log('Universal Partner sur',PORT)));

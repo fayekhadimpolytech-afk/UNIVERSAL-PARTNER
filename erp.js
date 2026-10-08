@@ -28,7 +28,7 @@ module.exports=function(routes,X){
  function sync(pid){const p=prod(pid);if(!p)return;const ss=E().stock.filter(s=>s.pid===pid);if(!ss.length)return;
   const tot=ss.reduce((a,s)=>a+s.qty,0);p.out=tot<=0;p.stockQty=tot;p.outSizes=ss.filter(s=>s.qty<=0&&s.variant).map(s=>s.variant)}
  const view=s=>({...s,label:label(s),product:prod(s.pid)?.name||'',img:prod(s.pid)?.imgs?.[0]||'',value:s.qty*s.cmp,alert:s.qty<=s.min});
- const IMG=path.join(__dirname,'public','img');
+ const IMG=X.img||path.join(__dirname,'public','img');
  const savePhoto=(data)=>{const m=String(data||'').match(/^data:image\/(jpeg|jpg|png|webp);base64,(.+)$/);if(!m)return null;
   const buf=Buffer.from(m[2],'base64');if(buf.length>4e6)throw[400,'Photo trop lourde (4 Mo max)'];const n='rec_'+id()+'.'+(m[1]==='png'?'png':'jpg');fs.writeFileSync(path.join(IMG,n),buf);return '/img/'+n};
  // Coût de revient : marchandise (CNY × taux) + frais 1688 + fret + dédouanement + transport local.
