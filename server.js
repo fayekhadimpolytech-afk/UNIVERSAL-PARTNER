@@ -87,7 +87,7 @@ const routes={
 // ---- Module ERP ----
 const fmtDate=t=>new Intl.DateTimeFormat('fr-FR',{timeZone:'Africa/Dakar',day:'2-digit',month:'2-digit',year:'numeric'}).format(t);
 require('./erp.js')(routes,{img:UPL,db:()=>db,save:()=>save(),pub,fmtDate});
-const STAFF=['stock','commercial','comptable','livreur'];
+const STAFF=['stock','commercial','comptable','livreur','logistique'];
 routes['GET /api/erp/users']=(q,b,u)=>{need(u,'admin');return db.users.filter(x=>x.role==='admin'||STAFF.includes(x.role)).map(pub)};
 routes['POST /api/erp/users']=(q,b,u)=>{need(u,'admin');if(!STAFF.includes(b.role))throw[400,'Rôle invalide'];if(!b.email||!b.name||String(b.pass||'').length<8)throw[400,'Nom, email et mot de passe (8 car. min) requis'];if(b.role==='livreur'&&!db.erp?.couriers?.some(c=>c.id===b.courier))throw[400,'Choisis la fiche livreur à relier au compte'];
  let x=db.users.find(v=>v.email===b.email);if(x&&x.role==='admin')throw[400,'Compte admin non modifiable'];if(!x){x={id:id(),country:'Sénégal'};db.users.push(x)}Object.assign(x,{name:b.name,email:b.email,role:b.role,pass:hash(b.pass),courier:b.role==='livreur'?String(b.courier||''):undefined});save();return pub(x)};

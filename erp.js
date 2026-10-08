@@ -9,8 +9,8 @@ module.exports=function(routes,X){
    (e.pos||[]).filter(p=>!p.receptions?.length&&p.status!=='clôturée').forEach(p=>{p.customs=0;if(p.dates?.['expédiée'])p.eta=new Date(p.dates['expédiée']+864e5*(p.mode==='maritime'?e.settings.etaSea:e.settings.etaAir)).toISOString().slice(0,10);if(p.lines)cost(p)})}
   for(const k of['sales','couriers','cash','expenses'])e[k]??=[];for(const k of['stock','moves','pos','disputes','inventories','audit'])e[k]??=[];return e};
  // Rôles : admin, stock (gestionnaire stock), commercial, comptable (lecture), livreur
- const ROLES={admin:'Admin',stock:'Gestionnaire stock',commercial:'Commercial',comptable:'Comptable (lecture)',livreur:'Livreur'};
- const can=(u,w)=>{if(!u)throw[401,'Connexion requise'];const r=u.role;
+ const ROLES={admin:'Admin',stock:'Gestionnaire stock',commercial:'Commercial',comptable:'Comptable (lecture)',livreur:'Livreur',logistique:'Commandes & livraisons'};
+ const can=(u,w,ok)=>{if(!u)throw[401,'Connexion requise'];const r=u.role;if(r==='logistique'){if(ok)return;throw[403,'Accès réservé : commandes et livraisons uniquement']}
   if(r==='admin')return;if(!w&&['stock','commercial','comptable'].includes(r))return;
   if(w==='stock'&&r==='stock')return;if(w==='sales'&&['commercial','stock'].includes(r))return;throw[403,'Accès refusé pour le rôle '+(ROLES[r]||r)]};
  const audit=(u,action,obj,detail)=>{const e=E();e.audit.unshift({id:id(),date:Date.now(),user:u?.name||'système',role:u?.role||'',action,obj,detail:detail||''});if(e.audit.length>5000)e.audit.length=5000};
@@ -75,8 +75,8 @@ module.exports=function(routes,X){
  const PO_ST=['brouillon','commandée','payée','expédiée','chez le transitaire','en transit','arrivée Dakar','réceptionnée partielle','réceptionnée totale','clôturée'];
  const S=X.save;
  Object.assign(routes,{
-  'GET /api/erp/me':(q,b,u)=>{if(u?.role!=='livreur')can(u);return{user:X.pub(u),roles:ROLES,write:u.role==='admin'||u.role==='stock',settings:E().settings,poStatuses:PO_ST}},
-  'GET /api/erp/products':(q,b,u)=>{can(u);return X.db().products.map(p=>({id:p.id,name:p.name,sizes:p.sizes||[],colors:p.colors||[],draft:!!p.draft,out:!!p.out,img:p.imgs?.[0]||'',cny:p.src?.cny||null,price:p.tiers?.[0]?.price||0,srcId:p.src?.id||'',site:p.src?.site||''}))},
+  'GET /api/erp/me':(q,b,u)=>{if(u?.role!=='livreur')can(u,0,1);return{user:X.pub(u),roles:ROLES,write:u.role==='admin'||u.role==='stock',settings:E().settings,poStatuses:PO_ST}},
+  'GET /api/erp/products':(q,b,u)=>{can(u,0,1);return X.db().products.map(p=>({id:p.id,name:p.name,sizes:p.sizes||[],colors:p.colors||[],draft:!!p.draft,out:!!p.out,img:p.imgs?.[0]||'',cny:p.src?.cny||null,price:p.tiers?.[0]?.price||0,srcId:p.src?.id||'',site:p.src?.site||''}))},
   'GET /api/erp/stock':(q,b,u)=>{can(u);const e=E();let r=e.stock.map(view);
    if(q.q){const s=q.q.toLowerCase();r=r.filter(x=>(x.label+x.loc).toLowerCase().includes(s))}if(q.alert)r=r.filter(x=>x.alert);
    r.sort((a,b)=>a.label.localeCompare(b.label));
@@ -150,13 +150,13 @@ module.exports=function(routes,X){
    inv.status='validé';inv.closed=Date.now();audit(u,'Validation inventaire','',n+' écarts ajustés');S();return inv},
   'GET /api/erp/audit':(q,b,u)=>{can(u);return E().audit.slice(0,+q.limit||500)},
   // ---- Ventes et livraisons ----
-  'GET /api/erp/sales':(q,b,u)=>{can(u);syncSite();let r=E().sales;if(q.status)r=r.filter(x=>x.status===q.status);if(q.src)r=r.filter(x=>x.source===q.src);
+  'GET /api/erp/sales':(q,b,u)=>{can(u,0,1);syncSite();let r=E().sales;if(q.status)r=r.filter(x=>x.status===q.status);if(q.src)r=r.filter(x=>x.source===q.src);
    if(q.q){const k=q.q.toLowerCase();r=r.filter(x=>(x.no+x.name+x.phone+x.address).toLowerCase().includes(k))}return r.map(sv)},
-  'POST /api/erp/sales':(q,b,u)=>{can(u,'sales');const e=E();if(!String(b.name||'').trim()||!String(b.phone||'').trim())throw[400,'Nom et téléphone requis'];if(!b.items?.length)throw[400,'Au moins un article'];
+  'POST /api/erp/sales':(q,b,u)=>{can(u,'sales',1);const e=E();if(!String(b.name||'').trim()||!String(b.phone||'').trim())throw[400,'Nom et téléphone requis'];if(!b.items?.length)throw[400,'Au moins un article'];
    const items=b.items.map(i=>{const p=prod(i.pid);if(!p)throw[400,'Produit invalide'];return{pid:p.id,name:p.name,variant:String(i.variant||'').trim(),qty:Math.max(1,Math.round(+i.qty)),price:Math.round(+i.price||p.tiers?.[0]?.price||0)}});
    const sa={id:id(),no:'WA'+String(Date.now()).slice(-6),source:'whatsapp',date:Date.now(),name:String(b.name).trim(),phone:String(b.phone).trim(),address:String(b.address||'').trim(),zone:String(b.zone||'').trim(),note:String(b.note||''),items,status:'nouvelle',dates:{nouvelle:Date.now()},by:u.name};
    e.sales.unshift(sa);audit(u,'Vente WhatsApp saisie',sa.no,sa.name+' — '+tot(sa)+' FCFA');S();return sv(sa)},
-  'POST /api/erp/sale/status':(q,b,u)=>{can(u,'sales');const sa=E().sales.find(x=>x.id===b.id);if(!sa)throw[404,'Vente introuvable'];
+  'POST /api/erp/sale/status':(q,b,u)=>{can(u,'sales',1);const sa=E().sales.find(x=>x.id===b.id);if(!sa)throw[404,'Vente introuvable'];
    const NEXT={nouvelle:['confirmée','annulée'],confirmée:['préparée','annulée'],préparée:['en livraison','annulée'],'en livraison':['livrée/payée','refusée','retournée'],'livrée/payée':['retournée']};
    if(!(NEXT[sa.status]||[]).includes(b.status))throw[400,'Passage '+sa.status+' → '+b.status+' impossible'];const prev=sa.status;
    if(b.status==='préparée')pick(u,sa);
@@ -168,10 +168,10 @@ module.exports=function(routes,X){
    sa.status=b.status;sa.dates[b.status]=Date.now();if(b.reason)sa.reason=String(b.reason);
    if(sa.source==='site'){const o=X.db().orders.find(o=>o.id===sa.ref);if(o)o.status=b.status==='livrée/payée'?'livrée et payée':b.status}
    audit(u,'Statut vente',sa.no,prev+' → '+b.status+(b.reason?' ('+b.reason+')':''));S();return sv(sa)},
-  'GET /api/erp/couriers':(q,b,u)=>{can(u);const e=E();return e.couriers.map(c=>{const L=e.sales.filter(s=>s.delivery?.courier===c.id);return{...c,count:L.length,ok:L.filter(s=>s.status==='livrée/payée').length,ko:L.filter(s=>['refusée','retournée'].includes(s.status)).length,fees:L.reduce((a,s)=>a+(s.delivery.fee||0),0)}})},
-  'POST /api/erp/couriers':(q,b,u)=>{can(u,'sales');const e=E();if(!String(b.name||'').trim()||!String(b.phone||'').trim())throw[400,'Nom et téléphone requis'];
+  'GET /api/erp/couriers':(q,b,u)=>{can(u,0,1);const e=E();return e.couriers.map(c=>{const L=e.sales.filter(s=>s.delivery?.courier===c.id);return{...c,count:L.length,ok:L.filter(s=>s.status==='livrée/payée').length,ko:L.filter(s=>['refusée','retournée'].includes(s.status)).length,fees:L.reduce((a,s)=>a+(s.delivery.fee||0),0)}})},
+  'POST /api/erp/couriers':(q,b,u)=>{can(u,'sales',1);const e=E();if(!String(b.name||'').trim()||!String(b.phone||'').trim())throw[400,'Nom et téléphone requis'];
    let c=b.id&&e.couriers.find(x=>x.id===b.id);if(!c){c={id:id(),created:Date.now()};e.couriers.unshift(c)}Object.assign(c,{name:String(b.name).trim(),phone:String(b.phone).trim(),zone:String(b.zone||'').trim()});audit(u,'Fiche livreur',c.name,c.phone+' '+c.zone);S();return c},
-  'GET /api/erp/sale/pdf':(q,b,u)=>{can(u);const sa=E().sales.find(x=>x.id===q.id);if(!sa)throw[404,'Vente introuvable'];return{__raw:{type:'application/pdf',name:'bon-livraison-'+sa.no+'.pdf',body:pdfBL(sa)}}},
+  'GET /api/erp/sale/pdf':(q,b,u)=>{can(u,0,1);const sa=E().sales.find(x=>x.id===q.id);if(!sa)throw[404,'Vente introuvable'];return{__raw:{type:'application/pdf',name:'bon-livraison-'+sa.no+'.pdf',body:pdfBL(sa)}}},
   // ---- Recettes : remise de caisse quotidienne par livreur ----
   'GET /api/erp/cash':(q,b,u)=>{can(u);const e=E(),day=q.day||dayOf(Date.now());const rows={};
    for(const s of e.sales){if(s.status!=='livrée/payée'||!s.paid||!s.delivery||dayOf(s.paid.date)!==day)continue;const r=rows[s.delivery.courier]??={courier:s.delivery.courier,name:s.delivery.courierName,phone:s.delivery.courierPhone,expected:{'espèces':0,Wave:0,'Orange Money':0},fees:0,sales:[]};
