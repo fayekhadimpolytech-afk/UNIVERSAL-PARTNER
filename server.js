@@ -128,7 +128,7 @@ function need(u,role){if(!u)throw[401,'Connexion requise'];if(role&&u.role!==rol
 const mime={'.png':'image/png','.jpg':'image/jpeg','.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css'};
 const srv=http.createServer((req,res)=>{const url=new URL(req.url,'http://x'),q=Object.fromEntries(url.searchParams);
  if(url.pathname.startsWith('/api/')){let body='';req.on('data',c=>body+=c);req.on('end',()=>{
-  const send=(c,d)=>{res.writeHead(c,{'Content-Type':'application/json'});res.end(JSON.stringify(d))};
+  const send=(c,d)=>{if(d&&d.__raw){res.writeHead(c,{'Content-Type':d.__raw.type,'Content-Disposition':'inline; filename="'+d.__raw.name+'"'});return res.end(d.__raw.body)}res.writeHead(c,{'Content-Type':'application/json'});res.end(JSON.stringify(d))};
   try{let M=req.method;if(q._m){M=q._m;if(q._b&&!body)body=q._b;}const h=routes[M+' '+url.pathname];if(!h)throw[404,'Route inconnue'];
    const tok=(req.headers.authorization||'').replace('Bearer ','')||q._t||'',u=db.users.find(x=>x.id===db.sessions[tok]);
    Promise.resolve().then(()=>h(q,body?JSON.parse(body):{},u)).then(d=>send(200,d),e=>Array.isArray(e)?send(e[0],{error:e[1]}):(console.error(e),send(500,{error:'Erreur serveur'})))}catch(e){Array.isArray(e)?send(e[0],{error:e[1]}):(console.error(e),send(500,{error:'Erreur serveur'}))}});return}
