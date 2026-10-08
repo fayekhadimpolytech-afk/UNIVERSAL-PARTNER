@@ -198,7 +198,7 @@ module.exports=function(routes,X){
    const L=e.sales.filter(s=>s.status==='livrée/payée'&&s.picked!==false).map(sv).filter(s=>{const d=dayOf(s.paid?.date||s.date);return d>=from&&d<=to});
    const key=t=>{const d=dayOf(t);if(g==='mois')return d.slice(0,7);if(g==='semaine'){const x=new Date(d+'T00:00:00Z'),w=(x.getUTCDay()+6)%7;x.setUTCDate(x.getUTCDate()-w);return x.toISOString().slice(0,10)}return d};
    const P={};for(const s of L){const k=key(s.paid?.date||s.date),p=P[k]??={period:k,count:0,revenue:0,cost:0,fees:0};p.count++;p.revenue+=s.total;p.cost+=s.cost||0;p.fees+=s.delivery?.fee||0}
-   const ex=e.expenses.filter(x=>x.day>=from&&x.day<=to);for(const x of ex){const p=P[key(Date.parse(x.day+'T12:00:00Z'))]??={period:key(Date.parse(x.day+'T12:00:00Z')),count:0,revenue:0,cost:0,fees:0};p.exp=(p.exp||0)+x.amount}
+   const ex=e.expenses.filter(x=>x.day>=from&&x.day<=to);for(const x of ex.filter(x=>!['fret','transitaire'].includes(x.cat))){const p=P[key(Date.parse(x.day+'T12:00:00Z'))]??={period:key(Date.parse(x.day+'T12:00:00Z')),count:0,revenue:0,cost:0,fees:0};p.exp=(p.exp||0)+x.amount}
    const per=Object.values(P).map(p=>({...p,exp:p.exp||0,margin:p.revenue-p.cost,pct:p.revenue?Math.round(100*(p.revenue-p.cost)/p.revenue):0,net:p.revenue-p.cost-p.fees-(p.exp||0)})).sort((a,b)=>b.period.localeCompare(a.period));
    const T=per.reduce((a,p)=>({count:a.count+p.count,revenue:a.revenue+p.revenue,cost:a.cost+p.cost,fees:a.fees+p.fees,exp:a.exp+p.exp}),{count:0,revenue:0,cost:0,fees:0,exp:0});
    T.margin=T.revenue-T.cost;T.pct=T.revenue?Math.round(100*T.margin/T.revenue):0;T.net=T.margin-T.fees-T.exp;
