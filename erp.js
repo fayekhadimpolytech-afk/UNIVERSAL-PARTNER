@@ -22,7 +22,7 @@ module.exports=function(routes,X){
  function move(u,s,type,qty,{cost,reason,ref}={}){qty=Math.round(+qty);if(!qty)return;
   if(qty<0&&s.qty+qty<0)throw[400,'Stock insuffisant pour '+label(s)+' ('+s.qty+' dispo)'];
   if(qty>0&&cost!=null&&type!=='retour'){const c=Math.round(+cost);s.cmp=s.qty>0?Math.round((s.qty*s.cmp+qty*c)/(s.qty+qty)):c}
-  s.qty+=qty;E().moves.unshift({id:id(),date:Date.now(),type,sid:s.id,label:label(s),qty,cost:Math.round(cost??s.cmp),reason:reason||'',ref:ref||'',user:u?.name||'système'});
+  const wasOk=s.qty>s.min;s.qty+=qty;if(qty<0&&wasOk&&s.qty<=s.min&&!X.quiet)setImmediate(()=>checkLow(s));if(s.qty>s.min)delete lowSent[s.id];E().moves.unshift({id:id(),date:Date.now(),type,sid:s.id,label:label(s),qty,cost:Math.round(cost??s.cmp),reason:reason||'',ref:ref||'',user:u?.name||'système'});
   sync(s.pid)}
  // Synchronisation site : stock total 0 sur un produit suivi → « épuisé »
  function sync(pid){const p=prod(pid);if(!p)return;const ss=E().stock.filter(s=>s.pid===pid);if(!ss.length)return;
@@ -72,6 +72,21 @@ module.exports=function(routes,X){
   out+=`xref\n0 ${objs.length+1}\n0000000000 65535 f \n`+off.map(o=>String(o).padStart(10,'0')+' 00000 n \n').join('')+`trailer\n<< /Size ${objs.length+1} /Root 1 0 R >>\nstartxref\n${x}\n%%EOF`;return Buffer.from(out,'latin1')}
  const EXP=['fret','transitaire','publicité Facebook','transport','salaires','autres'];
  const dayOf=t=>new Date(t).toISOString().slice(0,10); // Africa/Dakar = UTC+0 toute l'année
+ // ---- Notifications (CallMeBot WhatsApp + ntfy) ----
+ const BASE=process.env.PUBLIC_URL||'https://universal-partner.com';
+ const NS=()=>{const e=E();e.notif??={};const n=e.notif;n.wa??={on:false,phone:'221778722777',key:''};n.ntfy??={on:false,topic:'up-'+crypto.randomBytes(9).toString('hex'),server:'https://ntfy.sh'};n.orders??=true;n.stock??=true;n.log??=[];return n};
+ const fmF=v=>new Intl.NumberFormat('fr-FR').format(Math.round(v||0)).replace(/\s/g,' ')+' FCFA';
+ async function push(title,body,link,tags){const n=NS(),out=[];
+  if(n.wa.on&&n.wa.key&&n.wa.phone){try{const r=await fetch('https://api.callmebot.com/whatsapp.php?phone='+encodeURIComponent(n.wa.phone)+'&apikey='+encodeURIComponent(n.wa.key)+'&text='+encodeURIComponent('*'+title+'*\n'+body+(link?'\n'+link:'')),{signal:AbortSignal.timeout(20000)});const t=await r.text();
+   out.push({ch:'WhatsApp',ok:r.ok&&!/error|invalid|not/i.test(t.slice(0,300)),msg:t.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,160)})}catch(x){out.push({ch:'WhatsApp',ok:false,msg:x.message})}}
+  if(n.ntfy.on&&n.ntfy.topic){try{const r=await fetch(n.ntfy.server.replace(/\/$/,''),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({topic:n.ntfy.topic,title,message:body,click:link||undefined,tags:tags||[],priority:4}),signal:AbortSignal.timeout(15000)});
+   out.push({ch:'ntfy',ok:r.ok,msg:r.ok?'envoyé':'HTTP '+r.status})}catch(x){out.push({ch:'ntfy',ok:false,msg:x.message})}}
+  n.log.unshift({date:Date.now(),title,res:out});n.log.length=Math.min(n.log.length,30);X.save();return out}
+ function notifyOrder(o){const n=NS();if(!n.orders)return;const t=o.items.reduce((a,i)=>a+i.qty*i.price,0);
+  const body=`${o.source==='site'?'🌐 Site':'💬 WhatsApp'} · ${o.no}\n👤 ${o.name} · ${o.phone}\n${o.items.map(i=>`• ${i.qty} × ${i.name}${i.variant?' ('+i.variant+')':''}`).join('\n')}\n💰 ${fmF(t)}\n📍 ${[o.zone,o.address].filter(Boolean).join(' — ')||'—'}`;
+  push('Nouvelle commande '+o.no,body,BASE+'/erp.html#ventes?q='+encodeURIComponent(o.no),['shopping_cart']).catch(()=>{})}
+ const lowSent={};function checkLow(s){const n=NS();if(!n.stock||!s)return;if(s.qty>s.min){delete lowSent[s.id];return}if(lowSent[s.id])return;lowSent[s.id]=1;
+  push(s.qty<=0?'Rupture de stock':'Stock sous le seuil',`${label(s)}\nReste ${s.qty} (seuil ${s.min}) · 📍 ${s.loc}`,BASE+'/erp.html#stock',['warning']).catch(()=>{})}
  const PO_ST=['brouillon','commandée','payée','expédiée','chez le transitaire','en transit','arrivée Dakar','réceptionnée partielle','réceptionnée totale','clôturée'];
  const S=X.save;
  Object.assign(routes,{
@@ -155,7 +170,7 @@ module.exports=function(routes,X){
   'POST /api/erp/sales':(q,b,u)=>{can(u,'sales',1);const e=E();if(!String(b.name||'').trim()||!String(b.phone||'').trim())throw[400,'Nom et téléphone requis'];if(!b.items?.length)throw[400,'Au moins un article'];
    const items=b.items.map(i=>{const p=prod(i.pid);if(!p)throw[400,'Produit invalide'];return{pid:p.id,name:p.name,variant:String(i.variant||'').trim(),qty:Math.max(1,Math.round(+i.qty)),price:Math.round(+i.price||p.tiers?.[0]?.price||0)}});
    const sa={id:id(),no:'WA'+String(Date.now()).slice(-6),source:'whatsapp',date:Date.now(),name:String(b.name).trim(),phone:String(b.phone).trim(),address:String(b.address||'').trim(),zone:String(b.zone||'').trim(),note:String(b.note||''),items,status:'nouvelle',dates:{nouvelle:Date.now()},by:u.name};
-   e.sales.unshift(sa);audit(u,'Vente WhatsApp saisie',sa.no,sa.name+' — '+tot(sa)+' FCFA');S();return sv(sa)},
+   e.sales.unshift(sa);notifyOrder(sa);audit(u,'Vente WhatsApp saisie',sa.no,sa.name+' — '+tot(sa)+' FCFA');S();return sv(sa)},
   'POST /api/erp/sale/status':(q,b,u)=>{can(u,'sales',1);const sa=E().sales.find(x=>x.id===b.id);if(!sa)throw[404,'Vente introuvable'];
    const NEXT={nouvelle:['confirmée','annulée'],confirmée:['préparée','annulée'],préparée:['en livraison','annulée'],'en livraison':['livrée/payée','refusée','retournée'],'livrée/payée':['retournée']};
    if(!(NEXT[sa.status]||[]).includes(b.status))throw[400,'Passage '+sa.status+' → '+b.status+' impossible'];const prev=sa.status;
@@ -224,10 +239,18 @@ module.exports=function(routes,X){
   'POST /api/erp/livreur/status':(q,b,u)=>{if(u?.role!=='livreur')throw[403,'Réservé aux livreurs'];const sa=E().sales.find(x=>x.id===b.id);
    if(!sa||sa.delivery?.courier!==u.courier||sa.status!=='en livraison')throw[403,'Livraison non attribuée'];if(!['livrée/payée','refusée','retournée'].includes(b.status))throw[400,'Statut invalide'];
    if(b.status!=='livrée/payée'&&!String(b.reason||'').trim())throw[400,'Motif obligatoire'];return routes['POST /api/erp/sale/status'](q,{...b,_lv:1},{...u,role:'admin',name:u.name+' (livreur)'})},
+  'GET /api/erp/notif':(q,b,u)=>{if(u?.role!=='admin')throw[403,'Réservé à l\'admin'];const n=NS();X.save();return{wa:{on:n.wa.on,phone:n.wa.phone,keySet:!!n.wa.key,hint:n.wa.key?'••••'+n.wa.key.slice(-2):''},ntfy:n.ntfy,orders:n.orders,stock:n.stock,log:n.log.slice(0,10)}},
+  'POST /api/erp/notif':(q,b,u)=>{if(u?.role!=='admin')throw[403,'Réservé à l\'admin'];const n=NS();
+   if(b.wa){n.wa.on=!!b.wa.on;if(b.wa.phone)n.wa.phone=String(b.wa.phone).replace(/\D/g,'');if(b.wa.key)n.wa.key=String(b.wa.key).trim();if(b.wa.clearKey)n.wa.key=''}
+   if(b.ntfy){n.ntfy.on=!!b.ntfy.on;if(b.ntfy.regen)n.ntfy.topic='up-'+crypto.randomBytes(9).toString('hex')}if(b.orders!=null)n.orders=!!b.orders;if(b.stock!=null)n.stock=!!b.stock;
+   audit(u,'Paramètres notifications','',`WhatsApp ${n.wa.on?'oui':'non'}, ntfy ${n.ntfy.on?'oui':'non'}, commandes ${n.orders?'oui':'non'}, stock ${n.stock?'oui':'non'}`);X.save();return routes['GET /api/erp/notif'](q,b,u)},
+  'POST /api/erp/notif/test':async(q,b,u)=>{if(u?.role!=='admin')throw[403,'Réservé à l\'admin'];const n=NS();if(!(n.wa.on&&n.wa.key)&&!n.ntfy.on)throw[400,'Active au moins un canal (et enregistre la clé CallMeBot pour WhatsApp)'];
+   return push('Test Universal Partner','✅ Les notifications fonctionnent.\nExemple : nouvelle commande, client, articles, montant, zone.',BASE+'/erp.html',['white_check_mark'])},
   'POST /api/erp/demo':(q,b,u)=>{if(u?.role!=='admin')throw[403,'Réservé à l\'admin'];const r=demo(u,b.purge);S();return r},
  });
  // Données de démo : 10 produits suivis en stock + 2 commandes 1688 (1 réceptionnée avec litige, 1 à réceptionner)
- function demo(u,purge){const e=E();
+ function demo(u,purge){X.quiet=1;const n=NS(),o=n.orders;n.orders=false;try{return demo0(u,purge)}finally{n.orders=o;X.quiet=0}}
+ function demo0(u,purge){const e=E();
   if(purge){const ids=new Set(e.stock.filter(s=>s.demo).map(s=>s.id));e.stock=e.stock.filter(s=>!s.demo);e.moves=e.moves.filter(m=>!ids.has(m.sid));e.pos=e.pos.filter(p=>!p.demo);e.disputes=e.disputes.filter(d=>!d.demo);e.sales=e.sales.filter(x=>!x.demo);e.couriers=e.couriers.filter(x=>!x.demo);e.cash=e.cash.filter(x=>!x.demo);e.expenses=e.expenses.filter(x=>!x.demo);
    X.db().products.forEach(p=>{if(!e.stock.some(s=>s.pid===p.id)){delete p.out;delete p.stockQty;delete p.outSizes}});audit(u,'Purge données de démo');return{ok:true}}
   if(e.stock.some(s=>s.demo))throw[400,'Données de démo déjà présentes'];
@@ -262,5 +285,5 @@ module.exports=function(routes,X){
   const dz=S1.filter(s=>!e.moves.some(m=>m.sid===s.id&&m.type==='vente')).slice(-2);dz.forEach(s=>e.moves.filter(m=>m.sid===s.id).forEach(m=>m.date=d0-864e5*75));
   e.sales.sort((a,b)=>b.date-a.date);e.moves.forEach(m=>{if(S1.some(s=>s.id===m.sid))m.demo=true});
   audit(u,'Chargement données de démo','',ps.length+' produits, 2 commandes 1688, 15 ventes');return{ok:true}}
- return{E,audit,can,move,getStock};
+ return{E,audit,can,move,getStock,notifyOrder};
 };

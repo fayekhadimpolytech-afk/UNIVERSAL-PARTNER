@@ -1,5 +1,5 @@
 <!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ERP — Gestion UP</title>
+<title>ERP — Gestion UP</title><script src="qrcode.js"></script>
 <style>
 :root{--ink:#1d1a17;--rose:#e8607a;--mute:#7b716a;--line:#eadfd3;--bg:#fff8f2;--ok:#1f9d6b;--red:#d63a3a;--amber:#d98a00}
 *{box-sizing:border-box}body{margin:0;font:15px/1.45 system-ui,Inter,sans-serif;background:var(--bg);color:var(--ink)}
@@ -26,7 +26,7 @@ dialog{border:0;border-radius:16px;padding:16px;width:min(560px,96vw);max-height
 <header><b>⚙️ ERP Gestion UP</b><span class="sp"></span><small id="who"></small><button class="g" style="padding:6px 10px" onclick="logout()">Sortir</button></header>
 <nav id="nav"></nav><main id="m">Chargement…</main><div id="toast"></div><dialog id="dlg"></dialog>
 <script>
-const $=s=>document.querySelector(s),T=localStorage.t;let ME=null,P=[],TAB=location.hash.slice(1)||'dash';
+const $=s=>document.querySelector(s),T=localStorage.t;let ME=null,P=[],TAB=location.hash.slice(1).split('?')[0]||'dash',QQ=new URLSearchParams(location.hash.split('?')[1]||'').get('q')||'';
 const F=n=>new Intl.NumberFormat('fr-FR',{maximumFractionDigits:0}).format(Math.round(n||0))+' FCFA',N=n=>new Intl.NumberFormat('fr-FR').format(Math.round(n||0));
 const D=t=>t?new Intl.DateTimeFormat('fr-FR',{timeZone:'Africa/Dakar',day:'2-digit',month:'2-digit',year:'numeric'}).format(t):'',DH=t=>t?D(t)+' '+new Intl.DateTimeFormat('fr-FR',{timeZone:'Africa/Dakar',hour:'2-digit',minute:'2-digit'}).format(t):'';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -69,11 +69,11 @@ async recep(){const pos=await api('erp/pos');window._pos=pos;const f=$('#pf')?.v
   <p class="mute">${Object.entries(p.dates||{}).map(([k,v])=>esc(k)+' '+D(v)).join(' → ')}</p>
   ${p.receptions.map(r=>`<p class="mute">Réception du ${DH(r.date)} par ${esc(r.user)}${r.note?' — '+esc(r.note):''} ${r.photos.map(f=>`<a href="${f}" target="_blank">📷</a>`).join(' ')}</p>`).join('')}
   ${W()?`<div class="row">${i>=0&&i<6?`<button onclick="adv('${p.id}','${ME.poStatuses[i+1]}')">→ ${ME.poStatuses[i+1]}</button>`:''}${['arrivée Dakar','réceptionnée partielle'].includes(p.status)?`<button class="r" onclick="recv('${p.id}')">Réceptionner</button>`:''}${/réceptionnée/.test(p.status)?`<button class="g" onclick="adv('${p.id}','clôturée')">Clôturer</button>`:''}${!p.receptions.length&&p.status!=='clôturée'?`<button class="g" onclick="newPO('${p.id}')">Modifier</button>`:''}${p.status==='brouillon'?`<button class="g" onclick="delPO('${p.id}')">Supprimer</button>`:''}</div>`:''}</div>`}).join('')||'<div class="card mute">Aucune commande.</div>'}`},
-async param(){const s=ME.settings;return `<div class="card"><h2>Paramètres achats</h2><form onsubmit="event.preventDefault();saveSet(this)">
+async param(){const s=ME.settings;const n=await api('erp/notif');window._nt=n;return notifUI(n)+`<div class="card"><h2>Paramètres achats</h2><form onsubmit="event.preventDefault();saveSet(this)">
  <label class="mute">Taux CNY → FCFA<input name="rate" type="number" step="0.01" value="${s.rate}"></label><label class="mute">Fret aérien (FCFA/kg)<input name="air" type="number" value="${s.air}"></label><label class="mute">Fret maritime (FCFA/CBM)<input name="sea" type="number" value="${s.sea}"></label>
  <div class="row"><label class="mute">Délai aérien (jours)<input name="etaAir" type="number" value="${s.etaAir}"></label><label class="mute">Délai maritime (jours)<input name="etaSea" type="number" value="${s.etaSea}"></label></div>
  <label style="display:block;margin:8px 0"><input type="checkbox" name="apply" style="width:auto"> Recalculer les commandes pas encore réceptionnées</label><button>Enregistrer</button></form></div>`},
-async ventes(){const st=$('#vs')?.value||'',src=$('#vsrc')?.value||'',q=$('#vq')?.value||'';const L=await api('erp/sales?status='+encodeURIComponent(st)+'&src='+src+'&q='+encodeURIComponent(q));window._sa=L;window._cr=await api('erp/couriers');
+async ventes(){const st=$('#vs')?.value||'',src=$('#vsrc')?.value||'',q=$('#vq')?.value||QQ;QQ='';const L=await api('erp/sales?status='+encodeURIComponent(st)+'&src='+src+'&q='+encodeURIComponent(q));window._sa=L;window._cr=await api('erp/couriers');
  const done=L.filter(s=>s.status==='livrée/payée'),ko=L.filter(s=>['refusée','retournée'].includes(s.status));
  return `<div class="kpi"><div><span class="mute">À traiter</span><b>${L.filter(s=>['nouvelle','confirmée','préparée'].includes(s.status)).length}</b></div><div><span class="mute">En livraison</span><b>${L.filter(s=>s.status==='en livraison').length}</b></div><div><span class="mute">Livrées / payées</span><b>${done.length} · ${F(done.reduce((a,s)=>a+s.total,0))}</b></div><div><span class="mute">Taux de réussite</span><b>${done.length+ko.length?Math.round(100*done.length/(done.length+ko.length)):0} %</b></div></div>
  <div class="card row"><input id="vq" placeholder="Client, téléphone, n°…" value="${esc(q)}" onchange="render()"><select id="vs" onchange="render()">${opt([['','Tous statuts'],...['nouvelle','confirmée','préparée','en livraison','livrée/payée','refusée','retournée','annulée'].map(x=>[x,x])],st)}</select><select id="vsrc" onchange="render()">${opt([['','Site + WhatsApp'],['site','🌐 Site'],['whatsapp','💬 WhatsApp']],src)}</select>
@@ -232,5 +232,20 @@ async function expS(f){try{await api('erp/expenses',{id:_eid,...Object.fromEntri
 async function expDel(id){if(confirm('Supprimer cette dépense ?')){try{await api('erp/expenses/delete',{id});render()}catch(e){toast(e)}}}
 async function lvDone(id,f){try{await api('erp/livreur/status',{id,status:'livrée/payée',method:f.m.value,amount:f.a.value});toast('Encaissement enregistré ✓');render()}catch(e){toast(e)}}
 async function lvKo(id,st){const r=prompt('Motif ('+st+') :');if(!r)return;try{await api('erp/livreur/status',{id,status:st,reason:r});toast('Enregistré');render()}catch(e){toast(e)}}
+function qr(t){try{const q=qrcode(0,'M');q.addData(t);q.make();return q.createSvgTag({cellSize:5,margin:2})}catch(e){return ''}}
+function notifUI(n){const url=n.ntfy.server+'/'+n.ntfy.topic;return `<div class="card"><h2>🔔 Notifications</h2>
+ <label style="display:block"><input type="checkbox" id="n_or" style="width:auto" ${n.orders?'checked':''}> Nouvelle commande (site et WhatsApp saisie dans l'ERP)</label>
+ <label style="display:block;margin-bottom:8px"><input type="checkbox" id="n_st" style="width:auto" ${n.stock?'checked':''}> Stock passé sous le seuil / rupture</label>
+ <div class="card" style="background:#f4fff8"><label><input type="checkbox" id="n_wa" style="width:auto" ${n.wa.on?'checked':''}> <b>WhatsApp (CallMeBot)</b></label>
+  <div class="row" style="margin-top:6px"><label class="mute">Numéro<input id="n_ph" value="+${esc(n.wa.phone)}"></label><label class="mute">Clé API ${n.wa.keySet?'(enregistrée '+esc(n.wa.hint)+')':'(non enregistrée)'}<input id="n_key" type="password" autocomplete="off" placeholder="${n.wa.keySet?'laisser vide pour garder':'coller la clé reçue'}"></label></div>
+  <details style="margin-top:6px"><summary><b>Comment obtenir la clé (2 min)</b></summary><ol class="mute"><li>Dans les contacts du téléphone, enregistre le numéro <b>+34 644 71 81 99</b> (nom : CallMeBot).</li><li>Sur WhatsApp, envoie-lui exactement : <b>I allow callmebot to send me messages</b></li><li>Tu reçois une réponse « API Activated » avec ta clé (apikey, quelques chiffres).</li><li>Colle ces chiffres dans « Clé API » ci-dessus, coche WhatsApp, puis Enregistrer et Envoyer un test.</li></ol><p class="mute">Si la réponse n'arrive pas après 2 minutes, renvoie le message. Le numéro CallMeBot peut changer : la page callmebot.com indique toujours le numéro à jour.</p></details></div>
+ <div class="card" style="background:#f4f8ff"><label><input type="checkbox" id="n_nt" style="width:auto" ${n.ntfy.on?'checked':''}> <b>Notification push (appli ntfy)</b></label>
+  <div class="row" style="align-items:flex-start;margin-top:6px"><div style="flex:0 0 auto;background:#fff;border-radius:8px">${qr(url)}</div><div><p class="mute">Canal secret (ne pas partager) :</p><p><b style="word-break:break-all">${esc(n.ntfy.topic)}</b></p><p class="mute">Lien : <a href="${esc(url)}" target="_blank">${esc(url)}</a></p>
+  <ol class="mute"><li>Installe l'appli <b>ntfy</b> (Play Store ou App Store, gratuite).</li><li>Ouvre-la → <b>+</b> (s'abonner) → tape le nom du canal ci-dessus (serveur par défaut ntfy.sh) → S'abonner. Ou scanne ce QR code avec l'appareil photo.</li><li>Autorise les notifications quand le téléphone le demande.</li></ol><button type="button" class="g" onclick="notS({regen:1})">Changer le canal secret</button></div></div></div>
+ <div class="row"><button onclick="notS()">Enregistrer</button><button class="r" onclick="notT()">Envoyer un test</button></div>
+ ${n.log.length?`<p class="mute" style="margin-top:8px">Derniers envois : ${n.log.slice(0,5).map(l=>DH(l.date)+' '+esc(l.title)+' → '+(l.res.map(r=>r.ch+(r.ok?' ✓':' ✗ '+esc(r.msg))).join(', ')||'aucun canal actif')).join('<br>')}</p>`:''}</div>`}
+async function notS(x){try{const b={orders:$('#n_or').checked,stock:$('#n_st').checked,wa:{on:$('#n_wa').checked,phone:$('#n_ph').value,key:$('#n_key').value},ntfy:{on:$('#n_nt').checked,regen:!!x?.regen}};
+ if(x?.regen&&!confirm('Changer le canal ? Il faudra se réabonner dans ntfy.'))return;await api('erp/notif',b);toast('Notifications enregistrées');render()}catch(e){toast(e)}}
+async function notT(){try{await notS();const r=await api('erp/notif/test',{});toast(r.map(x=>x.ch+(x.ok?' ✓':' ✗ '+x.msg)).join(' · ')||'Aucun canal');render()}catch(e){toast(e)}}
 boot();
 </script></body></html>
