@@ -66,7 +66,7 @@ const routes={
  'POST /api/products/publish':(q,b,u)=>{need(u,'admin');const p=db.products.find(p=>p.id===b.id);if(!p)throw[404,'Produit introuvable'];const base=+b.price;if(!base)throw[400,'Prix FCFA requis'];
   p.tiers=[{min:1,price:base},{min:10,price:Math.round(base*.9)},{min:50,price:Math.round(base*.8)}];if(b.name)p.name=String(b.name);if(b.cat)p.cat=b.cat;if(b.sizes)p.sizes=String(b.sizes).split(',').map(x=>x.trim()).filter(Boolean);delete p.draft;p.created=Date.now();save();return p},
  'POST /api/settings':(q,b,u)=>{need(u,'admin');db.settings={...db.settings,whatsapp:String(b.whatsapp||'').replace(/\D/g,'')};save();return db.settings},
- 'GET /api/orders':(q,b,u)=>{need(u);return db.orders.filter(o=>o.buyer===u.id||u.role==='admin').reverse()},
+ 'GET /api/orders':(q,b,u)=>{need(u);return db.orders.filter(o=>o.buyer===u.id||u.role==='admin'||u.role==='logistique').reverse()},
  'POST /api/order-status':(q,b,u)=>{need(u);const o=db.orders.find(o=>o.id===b.id);if(!o||u.role!=='admin')throw[403,'Interdit'];o.status=b.status;save();return o},
  'POST /api/rfq':(q,b,u)=>{need(u);const p=db.products.find(p=>p.id===b.product);const r={id:id(),buyer:u.id,buyerName:u.name,product:b.product,productName:p?.name||b.title,seller:p?.seller||null,qty:b.qty,details:b.details,status:'ouverte',quotes:[],date:Date.now()};db.rfqs.push(r);save();return r},
  'GET /api/rfq':(q,b,u)=>{need(u);return db.rfqs.filter(r=>r.buyer===u.id||(u.role==='admin'&&(!r.seller||r.seller===u.id))).reverse()},

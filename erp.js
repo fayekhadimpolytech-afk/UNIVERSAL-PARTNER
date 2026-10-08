@@ -77,7 +77,7 @@ module.exports=function(routes,X){
  Object.assign(routes,{
   'GET /api/erp/me':(q,b,u)=>{if(u?.role!=='livreur')can(u,0,1);return{user:X.pub(u),roles:ROLES,write:u.role==='admin'||u.role==='stock',settings:E().settings,poStatuses:PO_ST}},
   'GET /api/erp/products':(q,b,u)=>{can(u,0,1);return X.db().products.map(p=>({id:p.id,name:p.name,sizes:p.sizes||[],colors:p.colors||[],draft:!!p.draft,out:!!p.out,img:p.imgs?.[0]||'',cny:p.src?.cny||null,price:p.tiers?.[0]?.price||0,srcId:p.src?.id||'',site:p.src?.site||''}))},
-  'GET /api/erp/stock':(q,b,u)=>{can(u);const e=E();let r=e.stock.map(view);
+  'GET /api/erp/stock':(q,b,u)=>{can(u,0,1);const e=E();let r=e.stock.map(view);
    if(q.q){const s=q.q.toLowerCase();r=r.filter(x=>(x.label+x.loc).toLowerCase().includes(s))}if(q.alert)r=r.filter(x=>x.alert);
    r.sort((a,b)=>a.label.localeCompare(b.label));
    return{rows:r,total:{qty:r.reduce((a,x)=>a+x.qty,0),value:r.reduce((a,x)=>a+x.value,0),alerts:e.stock.filter(s=>s.qty<=s.min).length,outs:e.stock.filter(s=>s.qty<=0).length}}},
@@ -92,7 +92,7 @@ module.exports=function(routes,X){
    const t=b.type;if(!['vente','retour','casse','ajustement'].includes(t))throw[400,'Type invalide'];if(!String(b.reason||'').trim())throw[400,'Motif obligatoire'];
    let qn=Math.abs(Math.round(+b.qty));if(!qn)throw[400,'Quantité requise'];const sign=t==='retour'?1:t==='ajustement'?(b.dir==='out'?-1:1):-1;
    move(u,s,t,sign*qn,{reason:b.reason,cost:t==='ajustement'&&sign>0?(+b.cost||s.cmp):undefined});audit(u,'Mouvement '+t,label(s),(sign*qn)+' — '+b.reason);S();return view(s)},
-  'GET /api/erp/moves':(q,b,u)=>{can(u);let r=E().moves;if(q.type)r=r.filter(m=>m.type===q.type);if(q.sid)r=r.filter(m=>m.sid===q.sid);return r.slice(0,+q.limit||500)},
+  'GET /api/erp/moves':(q,b,u)=>{can(u,0,1);let r=E().moves;if(q.type)r=r.filter(m=>m.type===q.type);if(q.sid)r=r.filter(m=>m.sid===q.sid);return r.slice(0,+q.limit||500)},
   // Commandes fournisseurs (version minimale pour la réception ; étape 2 = cycle complet + coût de revient)
   'GET /api/erp/pos':(q,b,u)=>{can(u);return E().pos},
   'POST /api/erp/pos':(q,b,u)=>{can(u,'stock');const e=E();let po=b.id&&e.pos.find(p=>p.id===b.id);const isNew=!po;
@@ -204,7 +204,7 @@ module.exports=function(routes,X){
    T.margin=T.revenue-T.cost;T.pct=T.revenue?Math.round(100*T.margin/T.revenue):0;T.net=T.margin-T.fees-T.exp;
    return{sales:L.map(s=>({id:s.id,no:s.no,date:s.paid?.date||s.date,name:s.name,total:s.total,cost:s.cost,margin:s.margin,pct:s.total?Math.round(100*s.margin/s.total):0,fee:s.delivery?.fee||0,red:s.total?s.margin/s.total<.5:false,items:s.items.map(i=>i.qty+'× '+i.name+(i.variant?' '+i.variant:'')).join(' | ')})),periods:per,total:T,threshold:50}},
   // ---- Tableau de bord ----
-  'GET /api/erp/dashboard':(q,b,u)=>{can(u);syncSite();const e=E(),now=Date.now(),td=dayOf(now);
+  'GET /api/erp/dashboard':(q,b,u)=>{can(u,0,1);syncSite();const e=E(),now=Date.now(),td=dayOf(now);
    const wk=(()=>{const x=new Date(td+'T00:00:00Z');x.setUTCDate(x.getUTCDate()-(x.getUTCDay()+6)%7);return x.toISOString().slice(0,10)})(),mo=td.slice(0,7)+'-01';
    const paid=e.sales.filter(s=>s.status==='livrée/payée').map(sv),pd=s=>dayOf(s.paid?.date||s.date);
    const per=from=>{const L=paid.filter(s=>pd(s)>=from),ca=L.reduce((a,s)=>a+s.total,0),c=L.reduce((a,s)=>a+(s.cost||0),0);return{count:L.length,ca,margin:ca-c,pct:ca?Math.round(100*(ca-c)/ca):0,basket:L.length?Math.round(ca/L.length):0}};
