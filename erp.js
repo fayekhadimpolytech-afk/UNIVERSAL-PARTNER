@@ -4,7 +4,7 @@ const fs=require('fs'),path=require('path'),crypto=require('crypto');
 module.exports=function(routes,X){
  const id=()=>crypto.randomBytes(6).toString('hex');
  const E=()=>{const db=X.db();db.erp??={};const e=db.erp;
-  e.settings??={rate:85,air:7500,sea:175000};for(const k of['stock','moves','pos','disputes','inventories','audit'])e[k]??=[];return e};
+  e.settings??={rate:90,air:7500,sea:175000};if(!e.settings.v2){if(e.settings.rate===85)e.settings.rate=90;e.settings.v2=1}e.settings.etaAir??=10;e.settings.etaSea??=45;for(const k of['stock','moves','pos','disputes','inventories','audit'])e[k]??=[];return e};
  // Rôles : admin, stock (gestionnaire stock), commercial, comptable (lecture), livreur
  const ROLES={admin:'Admin',stock:'Gestionnaire stock',commercial:'Commercial',comptable:'Comptable (lecture)',livreur:'Livreur'};
  const can=(u,w)=>{if(!u)throw[401,'Connexion requise'];const r=u.role;
@@ -28,11 +28,25 @@ module.exports=function(routes,X){
  const IMG=path.join(__dirname,'public','img');
  const savePhoto=(data)=>{const m=String(data||'').match(/^data:image\/(jpeg|jpg|png|webp);base64,(.+)$/);if(!m)return null;
   const buf=Buffer.from(m[2],'base64');if(buf.length>4e6)throw[400,'Photo trop lourde (4 Mo max)'];const n='rec_'+id()+'.'+(m[1]==='png'?'png':'jpg');fs.writeFileSync(path.join(IMG,n),buf);return '/img/'+n};
+ // Coût de revient : marchandise (CNY × taux) + frais 1688 + fret + dédouanement + transport local.
+ // Fret auto = poids × tarif aérien ou CBM × tarif maritime (poids/CBM saisis sur la commande, sinon somme des lignes).
+ // Fret réparti au poids (aérien) ou au volume (maritime) ; à défaut de poids/volume par ligne, au prorata des quantités.
+ // Frais 1688, dédouanement et transport local répartis au prorata de la valeur marchandise.
+ function cost(po,dry){const st=E().settings,rate=+po.rate||st.rate,L=po.lines||[];
+  L.forEach(l=>{l.goods=Math.round((+l.cny||0)*(+l.qty||0)*rate)});
+  const goods=L.reduce((a,l)=>a+l.goods,0),sea=po.mode==='maritime';
+  const key=l=>(sea?+l.cbm:+l.kg)*(+l.qty||0),sumKey=L.reduce((a,l)=>a+key(l),0);
+  const measure=sea?(+po.cbm||sumKey):(+po.weight||sumKey);
+  if(po.freightManual===''||po.freightManual===undefined)po.freightManual=null;const freightAuto=Math.round(measure*(sea?st.sea:st.air)),freight=po.freightManual!=null?Math.round(po.freightManual):freightAuto;
+  const other=Math.round((+po.fees1688||0)+(+po.customs||0)+(+po.local||0)),qtot=L.reduce((a,l)=>a+(+l.qty||0),0)||1;
+  L.forEach(l=>{const wf=sumKey>0?key(l)/sumKey:(+l.qty||0)/qtot,wv=goods>0?l.goods/goods:(+l.qty||0)/qtot;
+   l.freight=Math.round(freight*wf);l.other=Math.round(other*wv);l.total=l.goods+l.freight+l.other;l.unitCost=Math.round(l.total/(+l.qty||1))});
+  Object.assign(po,{rate,goods,measure,freightAuto,freight,other,total:goods+freight+other,allocBy:sumKey>0?(sea?'volume':'poids'):'quantité'});return dry?po:po}
  const PO_ST=['brouillon','commandée','payée','expédiée','chez le transitaire','en transit','arrivée Dakar','réceptionnée partielle','réceptionnée totale','clôturée'];
  const S=X.save;
  Object.assign(routes,{
   'GET /api/erp/me':(q,b,u)=>{can(u);return{user:X.pub(u),roles:ROLES,write:u.role==='admin'||u.role==='stock',settings:E().settings,poStatuses:PO_ST}},
-  'GET /api/erp/products':(q,b,u)=>{can(u);return X.db().products.map(p=>({id:p.id,name:p.name,sizes:p.sizes||[],colors:p.colors||[],draft:!!p.draft,out:!!p.out,img:p.imgs?.[0]||''}))},
+  'GET /api/erp/products':(q,b,u)=>{can(u);return X.db().products.map(p=>({id:p.id,name:p.name,sizes:p.sizes||[],colors:p.colors||[],draft:!!p.draft,out:!!p.out,img:p.imgs?.[0]||'',cny:p.src?.cny||null,srcId:p.src?.id||'',site:p.src?.site||''}))},
   'GET /api/erp/stock':(q,b,u)=>{can(u);const e=E();let r=e.stock.map(view);
    if(q.q){const s=q.q.toLowerCase();r=r.filter(x=>(x.label+x.loc).toLowerCase().includes(s))}if(q.alert)r=r.filter(x=>x.alert);
    r.sort((a,b)=>a.label.localeCompare(b.label));
@@ -51,12 +65,31 @@ module.exports=function(routes,X){
   'GET /api/erp/moves':(q,b,u)=>{can(u);let r=E().moves;if(q.type)r=r.filter(m=>m.type===q.type);if(q.sid)r=r.filter(m=>m.sid===q.sid);return r.slice(0,+q.limit||500)},
   // Commandes fournisseurs (version minimale pour la réception ; étape 2 = cycle complet + coût de revient)
   'GET /api/erp/pos':(q,b,u)=>{can(u);return E().pos},
-  'POST /api/erp/pos':(q,b,u)=>{can(u,'stock');const e=E();if(!b.lines?.length)throw[400,'Au moins une ligne'];
-   const po={id:id(),no:b.no||'',supplier:b.supplier||'',link:b.link||'',mode:b.mode==='maritime'?'maritime':'aérien',status:'arrivée Dakar',created:Date.now(),eta:b.eta||null,
-    lines:b.lines.map(l=>{if(!prod(l.pid))throw[400,'Produit invalide'];return{id:id(),pid:l.pid,variant:String(l.variant||'').trim(),qty:Math.max(1,Math.round(+l.qty)),cny:+l.cny||0,unitCost:Math.round(+l.unitCost||(+l.cny||0)*e.settings.rate),recv:0}}),receptions:[]};
-   e.pos.unshift(po);audit(u,'Création commande fournisseur',po.no||po.id,po.lines.length+' lignes');S();return po},
+  'POST /api/erp/pos':(q,b,u)=>{can(u,'stock');const e=E();let po=b.id&&e.pos.find(p=>p.id===b.id);const isNew=!po;
+   if(po&&po.receptions.length)throw[400,'Commande déjà en réception : coûts figés'];if(!b.lines?.length)throw[400,'Au moins une ligne'];
+   if(isNew)po={id:id(),status:'brouillon',created:Date.now(),dates:{brouillon:Date.now()},receptions:[]};
+   const n=v=>Math.max(0,+v||0);
+   Object.assign(po,{no:String(b.no||'').trim(),tracking:String(b.tracking||'').trim(),supplier:String(b.supplier||'').trim(),link:String(b.link||'').trim(),mode:b.mode==='maritime'?'maritime':'aérien',
+    rate:n(b.rate)||e.settings.rate,weight:n(b.weight),cbm:n(b.cbm),fees1688:n(b.fees1688),freightManual:b.freightManual===''||b.freightManual==null?null:n(b.freightManual),customs:n(b.customs),local:n(b.local),eta:b.eta||po.eta||null,note:String(b.note||'')});
+   po.lines=b.lines.map(l=>{if(!prod(l.pid))throw[400,'Produit invalide'];return{id:l.id||id(),pid:l.pid,variant:String(l.variant||'').trim(),qty:Math.max(1,Math.round(+l.qty)),cny:n(l.cny),kg:n(l.kg),cbm:n(l.cbm),recv:0}});
+   cost(po);if(isNew)e.pos.unshift(po);audit(u,isNew?'Création commande 1688':'Modification commande 1688',po.no||po.id,po.lines.length+' lignes, total '+po.total+' FCFA');S();return po},
+  'POST /api/erp/po/status':(q,b,u)=>{can(u,'stock');const e=E();const po=e.pos.find(p=>p.id===b.id);if(!po)throw[404,'Commande introuvable'];
+   const MAN=['brouillon','commandée','payée','expédiée','chez le transitaire','en transit','arrivée Dakar','clôturée'];if(!MAN.includes(b.status))throw[400,'Statut invalide'];
+   if(/réceptionnée/.test(po.status)&&b.status!=='clôturée')throw[400,'Commande déjà réceptionnée : seule la clôture est possible'];
+   if(b.status==='clôturée'&&!/réceptionnée/.test(po.status)&&u.role!=='admin')throw[400,'Clôture avant réception réservée à l\'admin'];
+   const prev=po.status;po.status=b.status;po.dates??={};po.dates[b.status]=b.date?Date.parse(b.date+'T12:00:00Z'):Date.now();
+   if(b.status==='commandée'&&!po.no&&b.no)po.no=String(b.no);if(b.tracking)po.tracking=String(b.tracking);
+   if(b.status==='expédiée'&&!b.keepEta)po.eta=new Date(po.dates['expédiée']+864e5*(po.mode==='maritime'?e.settings.etaSea:e.settings.etaAir)).toISOString().slice(0,10);
+   audit(u,'Statut commande 1688',po.no||po.id,prev+' → '+po.status);S();return po},
+  'POST /api/erp/po/delete':(q,b,u)=>{can(u,'stock');const e=E();const po=e.pos.find(p=>p.id===b.id);if(!po)throw[404,'Commande introuvable'];if(po.status!=='brouillon')throw[400,'Seul un brouillon peut être supprimé'];
+   e.pos=e.pos.filter(p=>p!==po);audit(u,'Suppression brouillon 1688',po.no||po.id);S();return{ok:true}},
+  'POST /api/erp/settings':(q,b,u)=>{if(u?.role!=='admin')throw[403,'Réservé à l\'admin'];const e=E();const before=JSON.stringify(e.settings);
+   for(const k of['rate','air','sea','etaAir','etaSea'])if(+b[k]>0)e.settings[k]=+b[k];
+   E().pos.filter(p=>!p.receptions.length&&p.status!=='clôturée'&&b.apply).forEach(p=>{p.rate=e.settings.rate;cost(p)});
+   audit(u,'Paramètres ERP',before,JSON.stringify(e.settings));S();return e.settings},
+  'GET /api/erp/po/preview':(q,b,u)=>{can(u);return cost(JSON.parse(q.po||'{}'),true)},
   'POST /api/erp/receive':(q,b,u)=>{can(u,'stock');const e=E();const po=e.pos.find(p=>p.id===b.po);if(!po)throw[404,'Commande introuvable'];
-   if(['brouillon','commandée','payée','clôturée'].includes(po.status))throw[400,'Commande non réceptionnable (statut '+po.status+')'];
+   if(!['arrivée Dakar','réceptionnée partielle'].includes(po.status))throw[400,'Commande non réceptionnable (statut '+po.status+')'];
    const photos=(b.photos||[]).slice(0,6).map(savePhoto).filter(Boolean);const rec={id:id(),date:Date.now(),user:u.name,lines:[],photos,note:b.note||''};const gaps=[];
    for(const r of b.lines||[]){const l=po.lines.find(x=>x.id===r.id);if(!l)continue;
     const got=Math.max(0,Math.round(+r.received||0)),ok=Math.max(0,Math.round(+r.ok||0)),bad=Math.max(0,Math.round(+r.damaged||0));
@@ -97,9 +130,12 @@ module.exports=function(routes,X){
   ps.forEach((p,i)=>{const sz=(p.sizes||[]).slice(0,2);(sz.length?sz:['']).forEach((v,j)=>{const s=getStock(p.id,v?'Taille '+v:'');s.demo=true;s.min=3;s.loc='Étagère '+String.fromCharCode(65+i%4)+(j+1);
    move(u,s,'ajustement',[12,6,2,9,4,15,1,8,5,10][i]+j*3,{cost:1400+i*150,reason:'Stock initial (démo)'})})});
   const S1=e.stock.filter(s=>s.demo);
-  const mk=(no,sup,mode,lines)=>{const po={id:id(),demo:true,no,supplier:sup,link:'https://detail.1688.com/offer/'+no+'.html',mode,status:'arrivée Dakar',created:Date.now()-864e5*12,lines:lines.map(([s,q,cny])=>({id:id(),pid:s.pid,variant:s.variant,qty:q,cny,unitCost:Math.round(cny*e.settings.rate+600),recv:0})),receptions:[]};e.pos.unshift(po);return po};
-  const a=mk('3921457788012','Yangzhou Comfy Slippers Co.','aérien',[[S1[0],20,14],[S1[2],10,16]]);
-  mk('3921460015577','Jinjiang Soft Home Factory','maritime',[[S1[4],30,11],[S1[6],24,12.5],[S1[8],18,13]]);
+  const d0=Date.now();const mk=(no,sup,mode,status,ago,extra,lines)=>{const po={id:id(),demo:true,no,tracking:'SF'+no.slice(-8),supplier:sup,link:'https://detail.1688.com/offer/'+no+'.html',mode,status,created:d0-864e5*ago,receptions:[],
+   rate:e.settings.rate,fees1688:0,customs:0,local:0,freightManual:null,weight:0,cbm:0,...extra,lines:lines.map(([s,q,cny,kg,cbm])=>({id:id(),pid:s.pid,variant:s.variant,qty:q,cny,kg,cbm,recv:0}))};
+   const seq=PO_ST.slice(0,PO_ST.indexOf(status)+1);po.dates={};seq.forEach((x,i)=>po.dates[x]=d0-864e5*(ago-i*Math.floor(ago/seq.length)));
+   po.eta=new Date((po.dates['expédiée']||d0)+864e5*(mode==='maritime'?e.settings.etaSea:e.settings.etaAir)).toISOString().slice(0,10);cost(po);e.pos.unshift(po);return po};
+  const a=mk('3921457788012','Yangzhou Comfy Slippers Co.','aérien','arrivée Dakar',14,{fees1688:4500,customs:15000,local:5000},[[S1[0],20,14,0.45,0],[S1[2],10,16,0.6,0]]);
+  mk('3921460015577','Jinjiang Soft Home Factory','maritime','en transit',30,{fees1688:6000,customs:40000,local:10000},[[S1[4],30,11,0,0.004],[S1[6],24,12.5,0,0.005],[S1[8],18,13,0,0.006]]);
   // réception partielle de la 1re commande avec écart → litige
   routes['POST /api/erp/receive']({}, {po:a.id,final:true,note:'Démo : carton 2 ouvert',lines:[{id:a.lines[0].id,received:18,ok:17,damaged:1},{id:a.lines[1].id,received:10,ok:10,damaged:0}]},u);
   e.disputes[0].demo=true;e.moves.slice(0,40).forEach(m=>{if(S1.some(s=>s.id===m.sid))m.demo=true});
