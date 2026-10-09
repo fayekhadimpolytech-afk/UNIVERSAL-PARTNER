@@ -9,7 +9,7 @@ module.exports=function(routes,X){
    (e.pos||[]).filter(p=>!p.receptions?.length&&p.status!=='clôturée').forEach(p=>{p.customs=0;if(p.dates?.['expédiée'])p.eta=new Date(p.dates['expédiée']+864e5*(p.mode==='maritime'?e.settings.etaSea:e.settings.etaAir)).toISOString().slice(0,10);if(p.lines)cost(p)})}
   for(const k of['sales','couriers','cash','expenses'])e[k]??=[];for(const k of['stock','moves','pos','disputes','inventories','audit'])e[k]??=[];return e};
  // Rôles : admin, stock (gestionnaire stock), commercial, comptable (lecture), livreur
- const ROLES={admin:'Admin',stock:'Gestionnaire stock',commercial:'Commercial',comptable:'Comptable (lecture)',livreur:'Livreur',logistique:'Commandes & livraisons'};
+ const ROLES={admin:'Admin',gerant:'Gérant (tout sauf supprimer)',stock:'Gestionnaire stock',commercial:'Commercial',comptable:'Comptable (lecture)',livreur:'Livreur',logistique:'Commandes & livraisons'};
  const can=(u,w,ok)=>{if(!u)throw[401,'Connexion requise'];const r=u.role;if(r==='logistique'){if(ok)return;throw[403,'Accès réservé : commandes et livraisons uniquement']}
   if(r==='admin')return;if(!w&&['stock','commercial','comptable'].includes(r))return;
   if(w==='stock'&&r==='stock')return;if(w==='sales'&&['commercial','stock'].includes(r))return;throw[403,'Accès refusé pour le rôle '+(ROLES[r]||r)]};

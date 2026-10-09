@@ -87,7 +87,7 @@ const routes={
 // ---- Module ERP ----
 const fmtDate=t=>new Intl.DateTimeFormat('fr-FR',{timeZone:'Africa/Dakar',day:'2-digit',month:'2-digit',year:'numeric'}).format(t);
 const ERP=require('./erp.js')(routes,{img:UPL,db:()=>db,save:()=>save(),pub,fmtDate});
-const STAFF=['stock','commercial','comptable','livreur','logistique'];
+const STAFF=['gerant','stock','commercial','comptable','livreur','logistique'];
 routes['GET /api/erp/pixel']=(q,b,u)=>{need(u,'admin');return{pixel:db.settings?.pixel||''}};
 routes['POST /api/erp/pixel']=(q,b,u)=>{need(u,'admin');const p=String(b.pixel||'').replace(/\D/g,'');if(p&&(p.length<10||p.length>20))throw[400,'Identifiant de pixel invalide (15 à 16 chiffres en général)'];db.settings={...db.settings,pixel:p};save();return{pixel:p}};
 routes['GET /api/erp/users']=(q,b,u)=>{need(u,'admin');return db.users.filter(x=>x.role==='admin'||STAFF.includes(x.role)).map(pub)};
@@ -135,7 +135,7 @@ const srv=http.createServer((req,res)=>{const url=new URL(req.url,'http://x'),q=
  if(url.pathname.startsWith('/api/')){let body='';req.on('data',c=>body+=c);req.on('end',()=>{
   const send=(c,d)=>{if(d&&d.__raw){res.writeHead(c,{'Content-Type':d.__raw.type,'Content-Disposition':'inline; filename="'+d.__raw.name+'"'});return res.end(d.__raw.body)}res.writeHead(c,{'Content-Type':'application/json'});res.end(JSON.stringify(d))};
   try{let M=req.method;if(q._m){M=q._m;if(q._b&&!body)body=q._b;}const h=routes[M+' '+url.pathname];if(!h)throw[404,'Route inconnue'];
-   const tok=(req.headers.authorization||'').replace('Bearer ','')||q._t||'',u=db.users.find(x=>x.id===db.sessions[tok]);
+   const tok=(req.headers.authorization||'').replace('Bearer ','')||q._t||'';let u=db.users.find(x=>x.id===db.sessions[tok]);if(u&&u.role==='gerant'&&url.pathname!=='/api/password'){if(/delete|demo/.test(url.pathname)||M==='DELETE')throw[403,'Suppression réservée à l\'admin'];u={...u,role:'admin',gerant:true}}
    Promise.resolve().then(()=>h(q,body?JSON.parse(body):{},u)).then(d=>send(200,d),e=>Array.isArray(e)?send(e[0],{error:e[1]}):(console.error(e),send(500,{error:'Erreur serveur'})))}catch(e){Array.isArray(e)?send(e[0],{error:e[1]}):(console.error(e),send(500,{error:'Erreur serveur'}))}});return}
  let f=path.join(__dirname,'public',url.pathname==='/'?'index.html':path.normalize(url.pathname));
  if(url.pathname.startsWith('/img/')){const g=path.join(UPL,path.basename(url.pathname));if(fs.existsSync(g))f=g}
