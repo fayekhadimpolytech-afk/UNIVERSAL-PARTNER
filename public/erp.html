@@ -234,7 +234,7 @@ async function lvDone(id,f){try{await api('erp/livreur/status',{id,status:'livr�
 async function lvKo(id,st){const r=prompt('Motif ('+st+') :');if(!r)return;try{await api('erp/livreur/status',{id,status:st,reason:r});toast('Enregistré');render()}catch(e){toast(e)}}
 function qr(t){try{const q=qrcode(0,'M');q.addData(t);q.make();return q.createSvgTag({cellSize:5,margin:2})}catch(e){return ''}}
 function notifUI(n){const url=n.ntfy.server+'/'+n.ntfy.topic;return `<div class="card"><h2>🔔 Notifications</h2>
- <label style="display:block"><input type="checkbox" id="n_or" style="width:auto" ${n.orders?'checked':''}> Nouvelle commande (site et WhatsApp saisie dans l'ERP)</label>
+ <label style="display:block"><input type="checkbox" id="n_all" style="width:auto" ${n.all?'checked':''}> Toute l'activité ERP (chaque action de chaque utilisateur)</label><label style="display:block"><input type="checkbox" id="n_or" style="width:auto" ${n.orders?'checked':''}> Nouvelle commande (site et WhatsApp saisie dans l'ERP)</label>
  <label style="display:block;margin-bottom:8px"><input type="checkbox" id="n_st" style="width:auto" ${n.stock?'checked':''}> Stock passé sous le seuil / rupture</label>
  <div class="card" style="background:#f4fff8"><label><input type="checkbox" id="n_wa" style="width:auto" ${n.wa.on?'checked':''}> <b>WhatsApp (CallMeBot)</b></label>
   <div class="row" style="margin-top:6px"><label class="mute">Numéro<input id="n_ph" value="+${esc(n.wa.phone)}"></label><label class="mute">Clé API ${n.wa.keySet?'(enregistrée '+esc(n.wa.hint)+')':'(non enregistrée)'}<input id="n_key" type="password" autocomplete="off" placeholder="${n.wa.keySet?'laisser vide pour garder':'coller la clé reçue'}"></label></div>
@@ -245,7 +245,7 @@ function notifUI(n){const url=n.ntfy.server+'/'+n.ntfy.topic;return `<div class=
  <div class="row"><button onclick="notS()">Enregistrer</button><button class="r" onclick="notT()">Envoyer un test</button></div>
  ${n.log.length?`<p class="mute" style="margin-top:8px">Derniers envois : ${n.log.slice(0,5).map(l=>DH(l.date)+' '+esc(l.title)+' → '+(l.res.map(r=>r.ch+(r.ok?' ✓':' ✗ '+esc(r.msg))).join(', ')||'aucun canal actif')).join('<br>')}</p>`:''}</div>`}
 async function pxS(){try{await api('erp/pixel',{pixel:$('#pxid').value});toast('Pixel enregistré');render()}catch(e){toast(e)}}
-async function notS(x){try{const b={orders:$('#n_or').checked,stock:$('#n_st').checked,wa:{on:$('#n_wa').checked,phone:$('#n_ph').value,key:$('#n_key').value},ntfy:{on:$('#n_nt').checked,regen:!!x?.regen}};
+async function notS(x){try{const b={all:$('#n_all').checked,orders:$('#n_or').checked,stock:$('#n_st').checked,wa:{on:$('#n_wa').checked,phone:$('#n_ph').value,key:$('#n_key').value},ntfy:{on:$('#n_nt').checked,regen:!!x?.regen}};
  if(x?.regen&&!confirm('Changer le canal ? Il faudra se réabonner dans ntfy.'))return;await api('erp/notif',b);toast('Notifications enregistrées');render()}catch(e){toast(e)}}
 async function notT(){try{await notS();const r=await api('erp/notif/test',{});toast(r.map(x=>x.ch+(x.ok?' ✓':' ✗ '+x.msg)).join(' · ')||'Aucun canal');render()}catch(e){toast(e)}}
 boot();

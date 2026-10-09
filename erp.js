@@ -13,7 +13,7 @@ module.exports=function(routes,X){
  const can=(u,w,ok)=>{if(!u)throw[401,'Connexion requise'];const r=u.role;if(r==='logistique'){if(ok)return;throw[403,'Accès réservé : commandes et livraisons uniquement']}
   if(r==='admin')return;if(!w&&['stock','commercial','comptable'].includes(r))return;
   if(w==='stock'&&r==='stock')return;if(w==='sales'&&['commercial','stock'].includes(r))return;throw[403,'Accès refusé pour le rôle '+(ROLES[r]||r)]};
- const audit=(u,action,obj,detail)=>{const e=E();e.audit.unshift({id:id(),date:Date.now(),user:u?.name||'système',role:u?.role||'',action,obj,detail:detail||''});if(e.audit.length>5000)e.audit.length=5000};
+ const audit=(u,action,obj,detail)=>{const e=E();e.audit.unshift({id:id(),date:Date.now(),user:u?.name||'système',role:u?.role||'',action,obj,detail:detail||''});if(e.audit.length>5000)e.audit.length=5000;try{const n=NS();if(n.all&&!X.quiet&&!/^Paramètres notifications/.test(action))setImmediate(()=>push('ERP · '+action,[(u?.name||'système')+(u?.role?' ('+u.role+')':''),obj,detail].filter(Boolean).join('\n'),'',''))}catch(_){}};
  const prod=pid=>X.db().products.find(p=>p.id===pid);
  const label=s=>{const p=prod(s.pid);return (p?.name||'Produit supprimé')+(s.variant?' — '+s.variant:'')};
  const getStock=(pid,variant,loc)=>{const e=E();variant=String(variant||'').trim();let s=e.stock.find(x=>x.pid===pid&&x.variant===variant);
@@ -74,7 +74,7 @@ module.exports=function(routes,X){
  const dayOf=t=>new Date(t).toISOString().slice(0,10); // Africa/Dakar = UTC+0 toute l'année
  // ---- Notifications (CallMeBot WhatsApp + ntfy) ----
  const BASE=process.env.PUBLIC_URL||'https://universal-partner.com';
- const NS=()=>{const e=E();e.notif??={};const n=e.notif;n.wa??={on:false,phone:'221778722777',key:''};n.ntfy??={on:false,topic:'up-'+crypto.randomBytes(9).toString('hex'),server:'https://ntfy.sh'};n.orders??=true;n.stock??=true;n.log??=[];return n};
+ const NS=()=>{const e=E();e.notif??={};const n=e.notif;n.wa??={on:false,phone:'221778722777',key:''};n.ntfy??={on:false,topic:'up-'+crypto.randomBytes(9).toString('hex'),server:'https://ntfy.sh'};n.orders??=true;n.stock??=true;n.all??=true;n.log??=[];return n};
  const fmF=v=>new Intl.NumberFormat('fr-FR').format(Math.round(v||0)).replace(/\s/g,' ')+' FCFA';
  async function push(title,body,link,tags){const n=NS(),out=[];
   if(n.wa.on&&n.wa.key&&n.wa.phone){try{const r=await fetch('https://api.callmebot.com/whatsapp.php?phone='+encodeURIComponent(n.wa.phone)+'&apikey='+encodeURIComponent(n.wa.key)+'&text='+encodeURIComponent('*'+title+'*\n'+body+(link?'\n'+link:'')),{signal:AbortSignal.timeout(20000)});const t=await r.text();
@@ -239,10 +239,10 @@ module.exports=function(routes,X){
   'POST /api/erp/livreur/status':(q,b,u)=>{if(u?.role!=='livreur')throw[403,'Réservé aux livreurs'];const sa=E().sales.find(x=>x.id===b.id);
    if(!sa||sa.delivery?.courier!==u.courier||sa.status!=='en livraison')throw[403,'Livraison non attribuée'];if(!['livrée/payée','refusée','retournée'].includes(b.status))throw[400,'Statut invalide'];
    if(b.status!=='livrée/payée'&&!String(b.reason||'').trim())throw[400,'Motif obligatoire'];return routes['POST /api/erp/sale/status'](q,{...b,_lv:1},{...u,role:'admin',name:u.name+' (livreur)'})},
-  'GET /api/erp/notif':(q,b,u)=>{if(u?.role!=='admin')throw[403,'Réservé à l\'admin'];const n=NS();X.save();return{wa:{on:n.wa.on,phone:n.wa.phone,keySet:!!n.wa.key,hint:n.wa.key?'••••'+n.wa.key.slice(-2):''},ntfy:n.ntfy,orders:n.orders,stock:n.stock,log:n.log.slice(0,10)}},
+  'GET /api/erp/notif':(q,b,u)=>{if(u?.role!=='admin')throw[403,'Réservé à l\'admin'];const n=NS();X.save();return{wa:{on:n.wa.on,phone:n.wa.phone,keySet:!!n.wa.key,hint:n.wa.key?'••••'+n.wa.key.slice(-2):''},ntfy:n.ntfy,orders:n.orders,stock:n.stock,all:n.all,log:n.log.slice(0,10)}},
   'POST /api/erp/notif':(q,b,u)=>{if(u?.role!=='admin')throw[403,'Réservé à l\'admin'];const n=NS();
    if(b.wa){n.wa.on=!!b.wa.on;if(b.wa.phone)n.wa.phone=String(b.wa.phone).replace(/\D/g,'');if(b.wa.key)n.wa.key=String(b.wa.key).trim();if(b.wa.clearKey)n.wa.key=''}
-   if(b.ntfy){n.ntfy.on=!!b.ntfy.on;if(b.ntfy.regen)n.ntfy.topic='up-'+crypto.randomBytes(9).toString('hex')}if(b.orders!=null)n.orders=!!b.orders;if(b.stock!=null)n.stock=!!b.stock;
+   if(b.ntfy){n.ntfy.on=!!b.ntfy.on;if(b.ntfy.regen)n.ntfy.topic='up-'+crypto.randomBytes(9).toString('hex')}if(b.orders!=null)n.orders=!!b.orders;if(b.stock!=null)n.stock=!!b.stock;if(b.all!=null)n.all=!!b.all;
    audit(u,'Paramètres notifications','',`WhatsApp ${n.wa.on?'oui':'non'}, ntfy ${n.ntfy.on?'oui':'non'}, commandes ${n.orders?'oui':'non'}, stock ${n.stock?'oui':'non'}`);X.save();return routes['GET /api/erp/notif'](q,b,u)},
   'POST /api/erp/notif/test':async(q,b,u)=>{if(u?.role!=='admin')throw[403,'Réservé à l\'admin'];const n=NS();if(!(n.wa.on&&n.wa.key)&&!n.ntfy.on)throw[400,'Active au moins un canal (et enregistre la clé CallMeBot pour WhatsApp)'];
    return push('Test Universal Partner','✅ Les notifications fonctionnent.\nExemple : nouvelle commande, client, articles, montant, zone.',BASE+'/erp.html',['white_check_mark'])},
