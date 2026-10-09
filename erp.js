@@ -117,7 +117,7 @@ module.exports=function(routes,X){
    Object.assign(po,{no:String(b.no||'').trim(),tracking:String(b.tracking||'').trim(),supplier:String(b.supplier||'').trim(),link:String(b.link||'').trim(),mode:b.mode==='maritime'?'maritime':'aérien',
     rate:n(b.rate)||e.settings.rate,weight:n(b.weight),cbm:n(b.cbm),fees1688:n(b.fees1688),customs:0,freightManual:b.freightManual===''||b.freightManual==null?null:n(b.freightManual),customs:n(b.customs),local:n(b.local),eta:b.eta||po.eta||null,note:String(b.note||'')});
    po.lines=b.lines.map(l=>{if(!prod(l.pid))throw[400,'Produit invalide'];return{id:l.id||id(),pid:l.pid,variant:String(l.variant||'').trim(),qty:Math.max(1,Math.round(+l.qty)),cny:n(l.cny),kg:n(l.kg),cbm:n(l.cbm),recv:0}});
-   cost(po);if(isNew)e.pos.unshift(po);audit(u,isNew?'Création commande 1688':'Modification commande 1688',po.no||po.id,po.lines.length+' lignes, total '+po.total+' FCFA');S();return po},
+   cost(po);if(isNew)e.pos.unshift(po);audit(u,isNew?'Création réapprovisionnement':'Modification réapprovisionnement',po.no||po.id,po.lines.length+' lignes, total '+po.total+' FCFA');S();return po},
   'POST /api/erp/po/status':(q,b,u)=>{can(u,'stock');const e=E();const po=e.pos.find(p=>p.id===b.id);if(!po)throw[404,'Commande introuvable'];
    const MAN=['brouillon','commandée','payée','expédiée','chez le transitaire','en transit','arrivée Dakar','clôturée'];if(!MAN.includes(b.status))throw[400,'Statut invalide'];
    if(/réceptionnée/.test(po.status)&&b.status!=='clôturée')throw[400,'Commande déjà réceptionnée : seule la clôture est possible'];
