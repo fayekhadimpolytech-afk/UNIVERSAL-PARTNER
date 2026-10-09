@@ -21,6 +21,11 @@
    "id": "enfant",
    "name": "Enfant",
    "icon": "🧸"
+  },
+  {
+   "id": "informatique",
+   "name": "Informatique",
+   "icon": "🖱️"
   }
  ],
  "users": [
@@ -44,6 +49,47 @@
   }
  ],
  "products": [
+  {
+   "id": "89d5f854cfed",
+   "name": "Souris sans fil MOFii M60 — Bluetooth 5.0, 2,4 GHz et filaire USB-C, clic silencieux, design dégradé",
+   "cat": "informatique",
+   "sizes": [],
+   "seller": "s1",
+   "unit": "pièce",
+   "moq": 1,
+   "img": "🖱️",
+   "desc": "La souris MOFii M60 se connecte de 3 façons : Bluetooth 5.0, 2,4 GHz via son petit récepteur USB, ou en filaire avec le câble USB-C fourni. Son clic silencieux réduit le bruit, idéal au bureau comme à la maison. Rechargeable par USB-C (batterie intégrée), boîtier fin au design dégradé transparent, bouton de réglage du DPI pour ajuster la vitesse du curseur. Compatible PC portable, ordinateur de bureau et tablette (Windows, Mac, Android, iOS). Caractéristiques : 3 modes (Bluetooth 5.0 / 2,4 GHz / filaire USB-C) · clic silencieux · rechargeable USB-C · DPI réglable 800/1200/2400/3200/6400 · 4 boutons + molette · dimensions 106 × 67 × 38 mm · poids ~98 g.",
+   "colors": [
+    "Blanc transparent",
+    "Noir / argent",
+    "Orange corail",
+    "Rose"
+   ],
+   "sold": 0,
+   "tiers": [
+    {
+     "min": 1,
+     "price": 15000
+    },
+    {
+     "min": 10,
+     "price": 13500
+    },
+    {
+     "min": 50,
+     "price": 12750
+    }
+   ],
+   "created": 1791590253449,
+   "imgs": [
+    "/img/m60-1.jpg",
+    "/img/m60-2.jpg",
+    "/img/m60-3.jpg",
+    "/img/m60-4.jpg",
+    "/img/m60-5.jpg",
+    "/img/m60-6.jpg"
+   ]
+  },
   {
    "id": "f4401590b15e",
    "name": "Mule fourrée à carreaux noir & blanc",
