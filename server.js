@@ -53,7 +53,7 @@ const routes={
  'POST /api/login':(q,b)=>{const u=db.users.find(u=>u.email===b.email&&u.pass===hash(b.pass));if(!u)throw[401,'Identifiants invalides'];return login(u)},
  'GET /api/me':(q,b,u)=>pub(u),
  'POST /api/orders':(q,b,u)=>{if(!b.items?.length)throw[400,'Panier vide'];if(!u&&(!b.name?.trim()||!b.phone?.trim()||!b.address?.trim()))throw[400,'Nom, téléphone et adresse requis'];if(!b.phone?.trim()||!b.address?.trim())throw[400,'Téléphone et adresse requis'];
-  const items=b.items.map(i=>{const p=db.products.find(p=>p.id===i.id);if(!p||p.draft)throw[400,'Produit invalide'];if(p.out)throw[400,'Stock épuisé : '+p.name];if(p.sizes?.length&&!p.sizes.includes(i.size))throw[400,'Choisissez la taille : '+p.name];if(p.colors?.length&&!p.colors.includes(i.color))throw[400,'Choisissez la couleur : '+p.name];if((p.outSizes||[]).includes('Taille '+i.size))throw[400,'Taille '+i.size+' épuisée : '+p.name];const qty=Math.max(+i.qty,p.moq);return{id:p.id,size:i.size||'',color:i.color||'',img:p.imgs?.[0]||p.img,name:p.name,seller:p.seller,qty,price:priceFor(p,qty)}});
+  const items=b.items.map(i=>{const p=db.products.find(p=>p.id===i.id);if(!p||p.draft)throw[400,'Produit invalide'];if(p.out||p.sold)throw[400,'Sold out (rupture de stock) : '+p.name];if(p.sizes?.length&&!p.sizes.includes(i.size))throw[400,'Choisissez la taille : '+p.name];if(p.colors?.length&&!p.colors.includes(i.color))throw[400,'Choisissez la couleur : '+p.name];if((p.outSizes||[]).includes('Taille '+i.size)||(p.soldSizes||[]).includes(i.size))throw[400,'Taille '+i.size+' épuisée : '+p.name];if((p.soldColors||[]).includes(i.color))throw[400,'Couleur '+i.color+' épuisée : '+p.name];const qty=Math.max(+i.qty,p.moq);return{id:p.id,size:i.size||'',color:i.color||'',img:p.imgs?.[0]||p.img,name:p.name,seller:p.seller,qty,price:priceFor(p,qty)}});
   const ship=0;
   const o={id:'UP'+Date.now().toString().slice(-7),buyer:u?.id||null,name:(b.name||u?.name||'').trim(),items,ship,sub:items.reduce((s,i)=>s+i.qty*i.price,0),total:items.reduce((s,i)=>s+i.qty*i.price,0)+(ship||0),pay:'livraison',address:b.address,phone:b.phone,zone:'partout',
    status:'à payer à la livraison',date:Date.now()};
@@ -75,6 +75,12 @@ const routes={
   db.products.unshift(p);save();return p},
  'POST /api/products/publish':(q,b,u)=>{need(u,'admin');const p=db.products.find(p=>p.id===b.id);if(!p)throw[404,'Produit introuvable'];const base=+b.price;if(!base)throw[400,'Prix FCFA requis'];
   p.tiers=[{min:1,price:base},{min:10,price:Math.round(base*.9)},{min:50,price:Math.round(base*.8)}];if(b.name)p.name=String(b.name);if(b.cat)p.cat=b.cat;if(b.sizes)p.sizes=String(b.sizes).split(',').map(x=>x.trim()).filter(Boolean);delete p.draft;p.created=Date.now();save();return p},
+ // Marquage manuel « Sold out » (produit et/ou variantes) — prioritaire sur le stock ERP
+ 'POST /api/product/soldout':(q,b,u)=>{need(u,'admin');const p=db.products.find(p=>p.id===b.id);if(!p)throw[404,'Produit introuvable'];
+  if(b.sold!=null)p.sold=!!b.sold;
+  if(b.soldSizes!=null)p.soldSizes=(Array.isArray(b.soldSizes)?b.soldSizes:[]).map(x=>String(x).trim()).filter(Boolean);
+  if(b.soldColors!=null)p.soldColors=(Array.isArray(b.soldColors)?b.soldColors:[]).map(x=>String(x).trim()).filter(Boolean);
+  save();return p},
  'POST /api/settings':(q,b,u)=>{need(u,'admin');db.settings={...db.settings,whatsapp:String(b.whatsapp||'').replace(/\D/g,'')};save();return db.settings},
  'GET /api/orders':(q,b,u)=>{need(u);return db.orders.filter(o=>o.buyer===u.id||u.role==='admin'||u.role==='logistique').reverse()},
  'POST /api/order-status':(q,b,u)=>{need(u);const o=db.orders.find(o=>o.id===b.id);if(!o||u.role!=='admin')throw[403,'Interdit'];o.status=b.status;save();return o},
