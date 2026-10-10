@@ -75,6 +75,9 @@ const routes={
   db.products.unshift(p);save();return p},
  'POST /api/products/publish':(q,b,u)=>{need(u,'admin');const p=db.products.find(p=>p.id===b.id);if(!p)throw[404,'Produit introuvable'];const base=+b.price;if(!base)throw[400,'Prix FCFA requis'];
   p.tiers=[{min:1,price:base},{min:10,price:Math.round(base*.9)},{min:50,price:Math.round(base*.8)}];if(b.name)p.name=String(b.name);if(b.cat)p.cat=b.cat;if(b.sizes)p.sizes=String(b.sizes).split(',').map(x=>x.trim()).filter(Boolean);delete p.draft;p.created=Date.now();save();return p},
+ // Modifier le prix (et le nom) d'un produit déjà publié — paliers 10/50 recalculés (−10 %/−20 %)
+ 'POST /api/products/price':(q,b,u)=>{need(u,'admin');const p=db.products.find(p=>p.id===b.id);if(!p)throw[404,'Produit introuvable'];const base=Math.round(+b.price);if(!(base>0))throw[400,'Prix FCFA requis'];
+  p.tiers=[{min:1,price:base},{min:10,price:Math.round(base*.9)},{min:50,price:Math.round(base*.8)}];if(b.name)p.name=String(b.name);save();return p},
  // Marquage manuel « Sold out » (produit et/ou variantes) — prioritaire sur le stock ERP
  'POST /api/product/soldout':(q,b,u)=>{need(u,'admin');const p=db.products.find(p=>p.id===b.id);if(!p)throw[404,'Produit introuvable'];
   if(b.sold!=null)p.sold=!!b.sold;
@@ -150,7 +153,7 @@ async function import1688(url,cat,u){const F=await fetchItem(url);const d=F.d,ii
   src:{site:F.site,id:iid,cny,cur:F.cur,goods:cny?Math.round(cny*cfg.rate):null,freight:cfg.freightUnit,suggested:sp},tiers:[{min:1,price:sp}]}}
 function login(u){const t=id()+id();db.sessions[t]=u.id;save();return{token:t,user:pub(u)}}
 function need(u,role){if(!u)throw[401,'Connexion requise'];if(role&&u.role!==role)throw[403,'Réservé à UP']}
-const mime={'.webp':'image/webp','.png':'image/png','.jpg':'image/jpeg','.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css'};
+const mime={'.webp':'image/webp','.png':'image/png','.jpg':'image/jpeg','.mp4':'video/mp4','.webm':'video/webm','.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css'};
 const srv=http.createServer((req,res)=>{const url=new URL(req.url,'http://x'),q=Object.fromEntries(url.searchParams);
  if(url.pathname.startsWith('/api/')){let body='';req.on('data',c=>body+=c);req.on('end',()=>{
   const send=(c,d)=>{if(d&&d.__raw){res.writeHead(c,{'Content-Type':d.__raw.type,'Content-Disposition':'inline; filename="'+d.__raw.name+'"'});return res.end(d.__raw.body)}res.writeHead(c,{'Content-Type':'application/json'});res.end(JSON.stringify(d))};
@@ -181,6 +184,13 @@ const srv=http.createServer((req,res)=>{const url=new URL(req.url,'http://x'),q=
  }
  let f=path.join(__dirname,'public',url.pathname==='/'?'index.html':path.normalize(url.pathname));
  if(url.pathname.startsWith('/img/')){const g=path.join(UPL,path.basename(url.pathname));if(fs.existsSync(g))f=g}
- fs.readFile(fs.existsSync(f)?f:path.join(__dirname,'public/index.html'),(e,d)=>{res.writeHead(200,{'Content-Type':mime[path.extname(f)]||'text/html; charset=utf-8'});res.end(d)});
+ if(!fs.existsSync(f))f=path.join(__dirname,'public/index.html');
+ const mt=mime[path.extname(f)]||'text/html; charset=utf-8';
+ // En-têtes + support des requêtes Range (lecture/seek des vidéos sur mobile)
+ const st=fs.statSync(f);
+ const rg=/^bytes=(\d*)-(\d*)$/.exec(req.headers.range||'');
+ if(rg&&st.isFile()){let s=rg[1]?+rg[1]:0,e=rg[2]?+rg[2]:st.size-1;if(s>e||s>=st.size){res.writeHead(416,{'Content-Range':'bytes */'+st.size});return res.end()}e=Math.min(e,st.size-1);
+  res.writeHead(206,{'Content-Type':mt,'Accept-Ranges':'bytes','Content-Range':'bytes '+s+'-'+e+'/'+st.size,'Content-Length':e-s+1});fs.createReadStream(f,{start:s,end:e}).pipe(res);return}
+ res.writeHead(200,{'Content-Type':mt,'Accept-Ranges':'bytes','Content-Length':st.size});fs.createReadStream(f).pipe(res);
 });
 boot().then(()=>srv.listen(PORT,()=>console.log('Universal Partner sur',PORT)));
