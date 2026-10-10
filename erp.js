@@ -4,10 +4,10 @@ const fs=require('fs'),path=require('path'),crypto=require('crypto');
 module.exports=function(routes,X){
  const id=()=>crypto.randomBytes(6).toString('hex');
  const E=()=>{const db=X.db();db.erp??={};const e=db.erp;
-  e.settings??={rate:90,air:7500,sea:175000};if(!e.settings.v2){if(e.settings.rate===85)e.settings.rate=90;e.settings.v2=1}e.settings.etaAir??=15;e.settings.etaSea??=60;
+  e.settings??={rate:90,air:7500,sea:175000};if(!e.settings.v2){if(e.settings.rate===85)e.settings.rate=90;e.settings.v2=1}e.settings.etaAir??=15;e.settings.etaSea??=60;e.settings.imp??={freightUnit:4000,margin:50};
   if(!e.settings.v3){e.settings.v3=1;if(e.settings.etaAir===10)e.settings.etaAir=15;if(e.settings.etaSea===45)e.settings.etaSea=60;
    (e.pos||[]).filter(p=>!p.receptions?.length&&p.status!=='clôturée').forEach(p=>{p.customs=0;if(p.dates?.['expédiée'])p.eta=new Date(p.dates['expédiée']+864e5*(p.mode==='maritime'?e.settings.etaSea:e.settings.etaAir)).toISOString().slice(0,10);if(p.lines)cost(p)})}
-  for(const k of['sales','couriers','cash','expenses'])e[k]??=[];for(const k of['stock','moves','pos','disputes','inventories','audit'])e[k]??=[];return e};
+  for(const k of['sales','couriers','cash','expenses','reports'])e[k]??=[];for(const k of['stock','moves','pos','disputes','inventories','audit'])e[k]??=[];return e};
  // Rôles : admin, stock (gestionnaire stock), commercial, comptable (lecture), livreur
  const ROLES={admin:'Admin',gerant:'Gérant (tout sauf supprimer)',stock:'Gestionnaire stock',commercial:'Commercial',comptable:'Comptable (lecture)',livreur:'Livreur',logistique:'Commandes & livraisons'};
  const can=(u,w,ok)=>{if(!u)throw[401,'Connexion requise'];const r=u.role;if(r==='logistique'){if(ok)return;throw[403,'Accès réservé : commandes et livraisons uniquement']}
@@ -130,6 +130,7 @@ module.exports=function(routes,X){
    e.pos=e.pos.filter(p=>p!==po);audit(u,'Suppression brouillon 1688',po.no||po.id);S();return{ok:true}},
   'POST /api/erp/settings':(q,b,u)=>{if(u?.role!=='admin')throw[403,'Réservé à l\'admin'];const e=E();const before=JSON.stringify(e.settings);
    for(const k of['rate','air','sea','etaAir','etaSea'])if(+b[k]>0)e.settings[k]=+b[k];
+   if(b.impFreight!=null||b.impMargin!=null)e.settings.imp={freightUnit:Math.max(0,Math.round(+(b.impFreight??e.settings.imp.freightUnit))),margin:Math.min(95,Math.max(0,+(b.impMargin??e.settings.imp.margin)))};
    E().pos.filter(p=>!p.receptions.length&&p.status!=='clôturée'&&b.apply).forEach(p=>{p.rate=e.settings.rate;cost(p)});
    audit(u,'Paramètres ERP',before,JSON.stringify(e.settings));S();return e.settings},
   'GET /api/erp/po/preview':(q,b,u)=>{can(u);return cost(JSON.parse(q.po||'{}'),true)},
@@ -230,7 +231,10 @@ module.exports=function(routes,X){
    const pos=e.pos.filter(p=>!/réceptionnée totale|clôturée/.test(p.status)).sort((a,b)=>String(a.eta||'9').localeCompare(String(b.eta||'9'))).map(p=>({id:p.id,no:p.no,supplier:p.supplier,mode:p.mode,status:p.status,eta:p.eta,total:p.total,late:p.eta&&p.eta<td&&!/arrivée|réceptionnée/.test(p.status)}));
    return{today:per(td),week:per(wk),month:per(mo),delivery:{ok,ko,rate:ok+ko?Math.round(100*ok/(ok+ko)):0,pending:e.sales.filter(s=>['nouvelle','confirmée','préparée','en livraison'].includes(s.status)).length},
     stock:{value:st.reduce((a,s)=>a+s.value,0),qty:st.reduce((a,s)=>a+s.qty,0),outs:st.filter(s=>s.qty<=0),low:st.filter(s=>s.qty>0&&s.alert)},top:Object.values(top).sort((a,b)=>b.qty-a.qty||b.ca-a.ca).slice(0,5),dormant,pos,
-    cashGaps:e.cash.filter(c=>c.totalGap).slice(0,5),threshold:50}},
+     cashGaps:e.cash.filter(c=>c.totalGap).slice(0,5),threshold:50}},
+   // ---- Rapports hebdomadaires ----
+   'GET /api/erp/reports':(q,b,u)=>{can(u,0,1);return E().reports||[]},
+   'POST /api/erp/report/run':(q,b,u)=>{if(u?.role!=='admin')throw[403,'Réservé à l\'admin'];return runWeeklyReport(u)},
   // ---- Espace livreur ----
   'GET /api/erp/livreur':(q,b,u)=>{if(u?.role!=='livreur')throw[403,'Réservé aux livreurs'];const e=E(),td=dayOf(Date.now());
    const L=e.sales.filter(s=>s.delivery?.courier===u.courier&&(s.status==='en livraison'||dayOf(s.delivery.done||s.delivery.out)===td)).map(sv);
@@ -248,6 +252,43 @@ module.exports=function(routes,X){
    return push('Test Universal Partner','✅ Les notifications fonctionnent.\nExemple : nouvelle commande, client, articles, montant, zone.',BASE+'/erp.html',['white_check_mark'])},
   'POST /api/erp/demo':(q,b,u)=>{if(u?.role!=='admin')throw[403,'Réservé à l\'admin'];const r=demo(u,b.purge);S();return r},
  });
+ // ---- Rapport hebdomadaire (auto chaque lundi 09:00 Dakar = UTC) ----
+ const nF=n=>Number(n||0).toLocaleString('fr-FR');
+ function buildReport(from,to){const e=E();syncSite();
+  const inR=t=>{const d=dayOf(t);return d>=from&&d<=to};
+  const paid=e.sales.filter(s=>s.status==='livrée/payée').map(sv).filter(s=>inR(s.paid?.date||s.date));
+  const ca=paid.reduce((a,s)=>a+s.total,0),cost=paid.reduce((a,s)=>a+(s.cost||0),0);
+  const margin=ca-cost,pct=ca?Math.round(100*margin/ca):0;
+  const received=e.sales.filter(s=>inR(s.date));
+  const bySource={};received.forEach(s=>bySource[s.source]=(bySource[s.source]||0)+1);
+  const top={};for(const s of paid)for(const i of s.items){const t=top[i.pid]??={pid:i.pid,name:i.name,img:prod(i.pid)?.imgs?.[0]||'',qty:0,ca:0};t.qty+=i.qty;t.ca+=i.qty*i.price}
+  const st=e.stock.map(view);
+  const outs=st.filter(s=>s.qty<=0),low=st.filter(s=>s.qty>0&&s.alert);
+  const last={};for(const m of e.moves){const k=m.sid;if(m.type==='vente')last[k]=Math.max(last[k]||0,m.date);if(m.qty>0&&m.type!=='retour')last['in'+k]=Math.min(last['in'+k]??m.date,m.date)}
+  const now=Date.now();
+  const dormant=st.filter(s=>s.qty>0).map(s=>{const ref=last[s.id]||last['in'+s.id]||now;return{...s,days:Math.floor((now-ref)/864e5)}}).filter(s=>s.days>60).sort((a,b)=>b.days-a.days);
+  const byMethod={'espèces':0,Wave:0,'Orange Money':0};paid.forEach(s=>{if(s.paid)byMethod[s.paid.method]=(byMethod[s.paid.method]||0)+s.paid.amount});
+  const gaps=e.cash.filter(c=>c.totalGap&&inR(Date.parse(c.day+'T12:00:00Z'))).map(c=>({day:c.day,name:c.name||c.courier,totalGap:c.totalGap}));
+  const pending=e.sales.filter(s=>['nouvelle','confirmée','préparée','en livraison'].includes(s.status));
+  const pos=e.pos.filter(p=>!/réceptionnée totale|clôturée/.test(p.status)).map(p=>({no:p.no||'brouillon',status:p.status,eta:p.eta,total:p.total}));
+  return{from,to,ca,margin,pct,count:paid.length,basket:paid.length?Math.round(ca/paid.length):0,received:received.length,bySource,top:Object.values(top).sort((a,b)=>b.qty-a.qty||b.ca-a.ca).slice(0,5),outs:outs.map(s=>({label:s.label,qty:s.qty})),low:low.map(s=>({label:s.label,qty:s.qty,min:s.min})),dormant:dormant.map(s=>({label:s.label,days:s.days,qty:s.qty,value:s.value})),cash:{byMethod,total:Object.values(byMethod).reduce((a,b)=>a+b,0),gaps},pending:{count:pending.length,value:pending.reduce((a,s)=>a+tot(s),0)},pos}}
+ function reportText(r){const dd=d=>d.split('-').reverse().join('/');return ['📊 Rapport hebdo Universal Partner','Semaine du '+dd(r.from)+' au '+dd(r.to),
+  'CA livré/payé : '+nF(r.ca)+' FCFA · marge '+nF(r.margin)+' ('+r.pct+' %) · '+r.count+' vente(s) · panier '+nF(r.basket)+' FCFA',
+  'Commandes reçues : '+r.received+' (site '+(r.bySource.site||0)+', WhatsApp '+(r.bySource.whatsapp||0)+')',
+  'Meilleures ventes : '+(r.top.map((t,i)=>(i+1)+') '+t.name+' ('+t.qty+')').join(' · ')||'—'),
+  'Ruptures : '+(r.outs.map(s=>s.label).join(', ')||'aucune')+'  |  Stock bas : '+(r.low.map(s=>s.label).join(', ')||'aucun'),
+  'Dormants (>60 j) : '+(r.dormant.length?r.dormant.slice(0,5).map(s=>s.label+' ('+s.days+' j)').join(', '):'aucun'),
+  'Caisse encaissée : '+nF(r.cash.total)+' FCFA'+(r.cash.gaps.length?' · écarts : '+r.cash.gaps.map(g=>g.name+' '+nF(g.totalGap)+' F').join(', '):' · aucun écart'),
+  'En cours : '+r.pending.count+' commande(s) · '+nF(r.pending.value)+' FCFA · '+r.pos.length+' réappro',
+  BASE+'/erp.html#report'].join('\n')}
+ function runWeeklyReport(u){const now=Date.now(),from=dayOf(now-7*864e5),to=dayOf(now-864e5);const r=buildReport(from,to);r.id=id();r.generated=now;const e=E();e.reports.unshift(r);if(e.reports.length>30)e.reports.length=30;S();
+  try{push('📊 Rapport hebdo UP',reportText(r),BASE+'/erp.html#report',['bar_chart']).catch(()=>{})}catch(_){}
+  const q=X.quiet;X.quiet=1;audit(u||{name:'système',role:'système'},'Rapport hebdomadaire généré',r.from+' → '+r.to,'CA '+r.ca+' · marge '+r.margin);X.quiet=q;return r}
+ function nextMonday9(now){const d=new Date(now);d.setUTCHours(9,0,0,0);const day=d.getUTCDay();let add=(1-day+7)%7;if(add===0&&now>=d.getTime())add=7;d.setUTCDate(d.getUTCDate()+add);return d.getTime()}
+ function prevMonday9(now){const d=new Date(now);d.setUTCHours(9,0,0,0);const day=d.getUTCDay();let sub=(day-1+7)%7;d.setUTCDate(d.getUTCDate()-sub);if(d.getTime()>now)d.setUTCDate(d.getUTCDate()-7);return d.getTime()}
+ function scheduleReports(){const t=nextMonday9(Date.now());setTimeout(()=>{try{runWeeklyReport()}catch(e){console.error('Rapport hebdo',e.message)}scheduleReports()},Math.max(1000,t-Date.now()))}
+ try{const e=E();const last=e.reports[0]?.generated||0;if(last&&last<prevMonday9(Date.now()))runWeeklyReport()}catch(_){}
+ scheduleReports();
  // Données de démo : 10 produits suivis en stock + 2 commandes 1688 (1 réceptionnée avec litige, 1 à réceptionner)
  function demo(u,purge){X.quiet=1;const n=NS(),o=n.orders;n.orders=false;try{return demo0(u,purge)}finally{n.orders=o;X.quiet=0}}
  function demo0(u,purge){const e=E();

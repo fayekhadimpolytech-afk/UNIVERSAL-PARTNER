@@ -63,6 +63,16 @@ const routes={
  'GET /api/tmapi':(q,b,u)=>{need(u,'admin');const k=db.secrets?.tmapi||'';return{set:!!k,hint:k?'••••'+k.slice(-4):''}},
  'POST /api/tmapi':(q,b,u)=>{need(u,'admin');db.secrets={...db.secrets,tmapi:String(b.key||'').trim()};save();return{set:!!db.secrets.tmapi}},
  'POST /api/import-1688':async(q,b,u)=>{need(u,'admin');const p=await import1688(b.url,b.cat,u);db.products.unshift(p);save();return p},
+ 'GET /api/import/config':(q,b,u)=>{need(u,'admin');return{...impCfg(),cur:'¥',formula:'prix = (CNY × taux + fret estimé/unité) ÷ (1 − marge)'}},
+ 'POST /api/import/manual':async(q,b,u)=>{need(u,'admin');const name=String(b.name||'').trim();if(!name)throw[400,'Nom du produit requis'];
+  const cny=+b.cny||0;const urls=String(b.imgs||'').split(/[\s,]+/).map(x=>x.trim()).filter(Boolean).slice(0,8);
+  const tag='m'+Date.now().toString(36);const imgs=(await Promise.all(urls.map((s,i)=>dl(s,tag+i+'.jpg')))).filter(Boolean);
+  const cfg=impCfg();const price=suggestedPrice(cny)||Math.max(0,Math.round(+b.price||0));
+  const desc=[String(b.desc||'').trim(),b.specs?'Caractéristiques : '+String(b.specs).trim():''].filter(Boolean).join(' · ');
+  const p={id:id(),name,cat:db.cats.some(c=>c.id===b.cat)?b.cat:db.cats[0].id,seller:u.id,unit:'pièce',moq:1,img:'📦',
+   imgs:imgs.length?imgs:undefined,sizes:String(b.sizes||'').split(',').map(x=>x.trim()).filter(Boolean),colors:String(b.colors||'').split(',').map(x=>x.trim()).filter(Boolean),
+   desc,sold:0,created:Date.now(),draft:true,src:{site:'manuel',id:tag,cny:cny||null,cur:'¥',goods:cny?Math.round(cny*cfg.rate):null,freight:cfg.freightUnit,suggested:price},tiers:[{min:1,price}]};
+  db.products.unshift(p);save();return p},
  'POST /api/products/publish':(q,b,u)=>{need(u,'admin');const p=db.products.find(p=>p.id===b.id);if(!p)throw[404,'Produit introuvable'];const base=+b.price;if(!base)throw[400,'Prix FCFA requis'];
   p.tiers=[{min:1,price:base},{min:10,price:Math.round(base*.9)},{min:50,price:Math.round(base*.8)}];if(b.name)p.name=String(b.name);if(b.cat)p.cat=b.cat;if(b.sizes)p.sizes=String(b.sizes).split(',').map(x=>x.trim()).filter(Boolean);delete p.draft;p.created=Date.now();save();return p},
  'POST /api/settings':(q,b,u)=>{need(u,'admin');db.settings={...db.settings,whatsapp:String(b.whatsapp||'').replace(/\D/g,'')};save();return db.settings},
@@ -115,6 +125,8 @@ async function fetchItem(url){url=String(url||'').trim();const L=url.toLowerCase
  if(/yiwugo/.test(L))return{site:'yiwugo',id:num,cur:'¥',d:await tm('/yiwugo/item_detail?item_id='+num)};
  if(/taobao|tmall/.test(L)){const m=url.match(/[?&]id=(\d+)/)||[0,num];return{site:'taobao',id:m[1],cur:'¥',d:await tm('/taobao/item_detail?item_id='+m[1])}}
  if(!num)throw[400,'Lien produit non reconnu'];let d;try{d=await tm('/1688/global/item_detail?item_id='+num+'&language=fr')}catch(e){d=await tm('/1688/item_detail?item_id='+num)}return{site:'1688',id:num,cur:'¥',d}}
+const impCfg=()=>{const s=(db.erp&&db.erp.settings)||{},i=s.imp||{};return{rate:+s.rate||90,freightUnit:+(i.freightUnit??4000),margin:+(i.margin??50)}};
+function suggestedPrice(cny){const c=impCfg();if(!(cny>0))return 0;const goods=Math.round(cny*c.rate),cost=goods+c.freightUnit,m=Math.min(95,Math.max(0,c.margin));return Math.round((cost/(1-m/100))/50)*50}
 async function import1688(url,cat,u){const F=await fetchItem(url);const d=F.d,iid=String(F.id||Date.now());
  const title=d.title||d.subject||'';const props=(d.sku_props||d.skuProps||[]);
  const pv=props.map(p=>({name:p.prop_name||p.name||'',values:(p.values||p.value||[]).map(v=>({name:v.name||v.value||'',img:v.imageUrl||v.image_url||v.img||''}))}));
@@ -126,8 +138,10 @@ async function import1688(url,cat,u){const F=await fetchItem(url);const d=F.d,ii
  const colors=fr.slice(1);const sizes=sizeP?(await Promise.all(sizeP.values.map(v=>tr(v.name.replace(/码/g,'').trim())))):[];
  const pr=d.price_info||{};const cny=+(pr.price||pr.sale_price||d.price||(d.price_range||d.priceRange||[])[0]?.[1]||0)||null;
  const name=(fr[0]||'Nouveau produit '+SITES[F.site]).slice(0,90);
+ const cfg=impCfg(),sp=cny?suggestedPrice(cny):0;
  return {id:id(),name,cat:db.cats.some(c=>c.id===cat)?cat:db.cats[0].id,seller:u.id,unit:'pièce',moq:1,img:'🥿',imgs:imgs.length?imgs:undefined,sizes,colors,
-  desc:name+(colors.length?'. Coloris : '+colors.join(', ')+'.':''),sold:0,created:Date.now(),draft:true,src:{site:F.site,id:iid,cny,cur:F.cur},tiers:[{min:1,price:0}]}}
+  desc:name+(colors.length?'. Coloris : '+colors.join(', ')+'.':''),sold:0,created:Date.now(),draft:true,
+  src:{site:F.site,id:iid,cny,cur:F.cur,goods:cny?Math.round(cny*cfg.rate):null,freight:cfg.freightUnit,suggested:sp},tiers:[{min:1,price:sp}]}}
 function login(u){const t=id()+id();db.sessions[t]=u.id;save();return{token:t,user:pub(u)}}
 function need(u,role){if(!u)throw[401,'Connexion requise'];if(role&&u.role!==role)throw[403,'Réservé à UP']}
 const mime={'.webp':'image/webp','.png':'image/png','.jpg':'image/jpeg','.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css'};
