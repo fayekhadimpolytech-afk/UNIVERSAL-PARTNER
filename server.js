@@ -137,6 +137,28 @@ const srv=http.createServer((req,res)=>{const url=new URL(req.url,'http://x'),q=
   try{let M=req.method;if(q._m){M=q._m;if(q._b&&!body)body=q._b;}const h=routes[M+' '+url.pathname];if(!h)throw[404,'Route inconnue'];
    const tok=(req.headers.authorization||'').replace('Bearer ','')||q._t||'';let u=db.users.find(x=>x.id===db.sessions[tok]);if(u&&u.role==='gerant'&&url.pathname!=='/api/password'){if(/delete|demo/.test(url.pathname)||M==='DELETE')throw[403,'Suppression réservée à l\'admin'];u={...u,role:'admin',gerant:true}}
    Promise.resolve().then(()=>h(q,body?JSON.parse(body):{},u)).then(d=>send(200,d),e=>Array.isArray(e)?send(e[0],{error:e[1]}):(console.error(e),send(500,{error:'Erreur serveur'})))}catch(e){Array.isArray(e)?send(e[0],{error:e[1]}):(console.error(e),send(500,{error:'Erreur serveur'}))}});return}
+ // --- URL produit réelles /p/<id> : balises Open Graph rendues côté serveur (aperçus Facebook/WhatsApp) ---
+ if(url.pathname.startsWith('/p/')){
+  const pid=url.pathname.slice(3).replace(/\/+$/,'');
+  const p=db.products.find(x=>x.id===pid&&!x.draft);
+  const proto=String(req.headers['x-forwarded-proto']||'https').split(',')[0].trim()||'https';
+  const base=process.env.SITE_URL||(proto+'://'+String(req.headers.host||'universal-partner.com'));
+  const escO=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const fmtP=n=>Number(n||0).toLocaleString('fr-FR').replace(/\u202f|\u00a0/g,' ');
+  const title=p?p.name:'Universal Partner — Boutique';
+  const price=p&&p.tiers&&p.tiers[0]?p.tiers[0].price:0;
+  const desc=p?(p.name+' — '+fmtP(price)+' FCFA · Livraison gratuite · Paiement à la livraison · Universal Partner'):'Boutique Universal Partner — livraison gratuite, paiement à la livraison.';
+  const urlProd=base+'/p/'+pid;
+  const og=['<meta property="og:type" content="product">','<meta property="og:site_name" content="Universal Partner">','<meta property="og:title" content="'+escO(title)+'">','<meta property="og:description" content="'+escO(desc)+'">','<meta property="og:url" content="'+escO(urlProd)+'">','<meta name="twitter:card" content="summary_large_image">','<meta name="twitter:title" content="'+escO(title)+'">','<meta name="twitter:description" content="'+escO(desc)+'">'];
+  if(p&&p.imgs&&p.imgs[0]){const im=base+p.imgs[0];og.splice(4,0,'<meta property="og:image" content="'+escO(im)+'">','<meta property="og:image:secure_url" content="'+escO(im)+'">');og.push('<meta name="twitter:image" content="'+escO(im)+'">')}
+  fs.readFile(path.join(__dirname,'public','index.html'),(e,d)=>{
+   let html=(e||!d)?('<!doctype html><meta http-equiv="refresh" content="0;url=/#/p/'+pid+'">'):d.toString();
+   html=html.replace('</head>',og.join('\n')+'\n</head>');
+   if(p)html=html.replace('</body>','<script>location.replace("/#/p/'+pid+'")</script></body>');
+   res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);
+  });
+  return;
+ }
  let f=path.join(__dirname,'public',url.pathname==='/'?'index.html':path.normalize(url.pathname));
  if(url.pathname.startsWith('/img/')){const g=path.join(UPL,path.basename(url.pathname));if(fs.existsSync(g))f=g}
  fs.readFile(fs.existsSync(f)?f:path.join(__dirname,'public/index.html'),(e,d)=>{res.writeHead(200,{'Content-Type':mime[path.extname(f)]||'text/html; charset=utf-8'});res.end(d)});

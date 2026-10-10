@@ -59,7 +59,7 @@ footer{background:var(--ink);color:#ddd;margin-top:60px;padding:56px 0 30px}foot
 <div class="ann"><div id="ann"></div></div>
 <header><div class="wrap bar"><a class="logo" href="#/"><i>Universal</i> Partner</a>
 <nav class="menu"><a href="#/shop">Boutique</a><a href="#/shop?cat=femme">Femme</a><a href="#/shop?cat=homme">Homme</a><a href="#/shop?cat=enfant">Enfant</a><a href="#/shop?cat=informatique">Informatique</a><a href="#/gros">Prix de gros</a></nav><div class="sp"></div>
-<form class="srch" onsubmit="event.preventDefault();go('#/shop?q='+encodeURIComponent(this.q.value))"><span>🔎</span><input name="q" placeholder="Rechercher une pantoufle…"></form>
+<form class="srch" onsubmit="event.preventDefault();go('#/shop?q='+encodeURIComponent(this.q.value))"><span>🔎</span><input name="q" placeholder="Rechercher un produit…"></form>
 <a class="ic" id="acc" title="Mon compte">👤</a><a class="ic" onclick="cart()" title="Panier">🛍️<b id="cn">0</b></a></div></header>
 <main id="app"></main>
 <footer><div class="wrap"><div class="cols"><div><div class="logo" style="color:#fff"><i>Universal</i> Partner</div><p>Des produits de qualité pour toute la famille, vendus et livrés par Universal Partner.</p><div class="pay"><span>💵 Paiement à la livraison</span></div></div>
@@ -123,6 +123,7 @@ ${p.colors?.length?`<p><b>Couleur</b> <span class="mute small" id="cll">— choi
 <div style="display:flex;gap:12px;margin:24px 0;flex-wrap:wrap"><div class="qty"><a onclick="setQ(S.q-1)">−</a><input id="qv" value="1" oninput="setQ(+this.value)"><a onclick="setQ(S.q+1)">+</a></div>${p.out?'<button style="flex:1;background:#999;color:#fff;cursor:not-allowed" disabled>Stock épuisé</button>':`<button class="rose" style="flex:1" onclick="addCart()">Ajouter au panier · <span id="tt">${F(p.tiers[0].price)}</span></button>`}</div>
 <button style="width:100%;background:#25d366;margin-bottom:12px" onclick="waProduct()">🟢 Commander sur WhatsApp</button>
 <div style="display:flex;gap:10px;flex-wrap:wrap"><a class="btn ghost" onclick="S.rfq=S.cur.name;go('#/gros')">📝 Devis pour grosse quantité</a><a class="btn ghost" onclick="contact()">💬 Une question ?</a></div>
+<div style="margin-top:22px;border-top:1px solid var(--line);padding-top:16px"><b style="font-size:15px">📣 Partager ce produit</b><div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px"><a class="btn ghost" onclick="shareFb()">📘 Facebook</a><a class="btn ghost" onclick="shareWa()">🟢 WhatsApp</a><a class="btn ghost" onclick="copyProdLink()">🔗 Copier le lien</a></div></div>
 <div class="acc" style="margin-top:20px"><details open><summary>🚚 Livraison</summary><p class="mute">Livraison gratuite partout : 24 à 48 h à Dakar, délais variables en région et à l’international.</p></details>
 <details><summary>💵 Paiement</summary><p class="mute">Paiement à la livraison : vous payez à la réception de votre commande.</p></details><details><summary>↩️ Échange</summary><p class="mute">Un souci ? Échange possible sous 7 jours.</p></details></div></div></div>
 ${rel.length?`<section><div class="sh"><h2>Vous aimerez aussi</h2></div><div class="grid">${rel.map(card).join('')}</div></section>`:''}</div>`},
@@ -166,6 +167,11 @@ ${dr.length?`<div class="box" style="margin-top:18px"><h3 style="margin-top:0">�
 const waNum=()=>S.meta.settings?.whatsapp||'';
 function waGo(t){px('Contact',{content_name:'WhatsApp'});const n=waNum();window.open('https://wa.me/'+n+'?text='+encodeURIComponent(t),'_blank')}
 function waProduct(){if(S.cur.sizes?.length&&!S.sz){toast('Choisissez votre taille 👆');return}const l=['- Modèle : '+S.cur.name];if(S.cur.sizes?.length)l.push('- Taille : '+(S.sz||'-'));if(S.cur.colors?.length)l.push('- Couleur : '+(S.col||'-'));l.push('- Quantité : '+S.q+' '+(S.cur.unit||'pièce')+'(s)');l.push('- Prix : '+F(price(S.cur,S.q)*S.q));waGo('Bonjour Universal Partner, je veux commander :\n'+l.join('\n')+'\nLien : '+location.href)}
+const prodLink=src=>{const u=location.origin+'/p/'+S.cur.id;return src?u+'?utm_source='+src+'&utm_medium=social&utm_campaign=partage_produit':u};
+function shareMsg(){return 'Découvrez « '+S.cur.name+' » à '+F(S.cur.tiers[0].price)+' chez Universal Partner 🛒 Livraison gratuite, paiement à la livraison.\n'+prodLink('whatsapp')}
+function shareFb(){px('Contact',{content_name:'Partage Facebook'});window.open('https://www.facebook.com/sharer/sharer.php?u='+encodeURIComponent(prodLink('facebook')),'_blank','noopener')}
+function shareWa(){px('Contact',{content_name:'Partage WhatsApp'});window.open('https://wa.me/?text='+encodeURIComponent(shareMsg()),'_blank','noopener')}
+function copyProdLink(){const u=prodLink('');const ok=()=>toast('Lien copié ✅');if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(u).then(ok).catch(()=>prompt('Copiez le lien :',u));else prompt('Copiez le lien :',u)}
 function waCart(){const l=S.cart.map(i=>{const p=S.all.find(p=>p.id==i.id);return p?`- ${p.name} · taille ${i.size||'-'}${i.color?' · '+i.color:''} · ${i.qty} pièce(s)`:''}).filter(Boolean);waGo('Bonjour Universal Partner, je veux commander :\n'+l.join('\n'))}
 async function track(f){try{const o=await api('order?id='+encodeURIComponent(f.id.value.trim())+'&phone='+encodeURIComponent(f.phone.value));tr.innerHTML=`<div class="box" style="margin-top:14px"><h3 style="margin-top:0">Commande ${o.id} <span class="chip">${esc(o.status)}</span></h3>${o.items.map(i=>`<div>${esc(i.name)} · taille ${esc(i.size)} · ×${i.qty}</div>`).join('')}<p><b>${F(o.total)}</b> · paiement à la livraison · livraison gratuite</p></div>`}catch(e){toast(e)}}
 async function chpw(f){try{const d=await api('password',{old:f.old.value,pass:f.pass.value});S.token=localStorage.t=d.token;f.reset();toast('Mot de passe changé')}catch(e){toast(e)}}
