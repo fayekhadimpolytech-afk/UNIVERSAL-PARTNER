@@ -15,7 +15,9 @@ module.exports=function(routes,X){
   if(w==='stock'&&r==='stock')return;if(w==='sales'&&['commercial','stock'].includes(r))return;throw[403,'Accès refusé pour le rôle '+(ROLES[r]||r)]};
  const audit=(u,action,obj,detail)=>{const e=E();e.audit.unshift({id:id(),date:Date.now(),user:u?.name||'système',role:u?.role||'',action,obj,detail:detail||''});if(e.audit.length>5000)e.audit.length=5000;try{const n=NS();if(n.all&&!X.quiet&&!/^Paramètres notifications/.test(action))setImmediate(()=>push('ERP · '+action,[(u?.name||'système')+(u?.role?' ('+u.role+')':''),obj,detail].filter(Boolean).join('\n'),'',''))}catch(_){}};
  const prod=pid=>X.db().products.find(p=>p.id===pid);
- const label=s=>{const p=prod(s.pid);return (p?.name||'Produit supprimé')+(s.variant?' — '+s.variant:'')};
+  const label=s=>{const p=prod(s.pid);return (p?.name||'Produit supprimé')+(s.variant?' — '+s.variant:'')};
+  // Vignette produit : image de la variante si elle existe (p.vimgs[variant]), sinon l'image principale.
+  const pimg=(pid,variant)=>{const p=prod(pid);if(!p)return '';const v=String(variant||'').trim();return (p.vimgs&&p.vimgs[v])||p.imgs?.[0]||''};
  const getStock=(pid,variant,loc)=>{const e=E();variant=String(variant||'').trim();let s=e.stock.find(x=>x.pid===pid&&x.variant===variant);
   if(!s){s={id:id(),pid,variant,loc:loc||'Entrepôt Dakar',qty:0,cmp:0,min:3};e.stock.push(s)}return s};
  // Mouvement : qty signée. Entrées au coût → coût moyen pondéré.
@@ -27,7 +29,7 @@ module.exports=function(routes,X){
  // Synchronisation site : stock total 0 sur un produit suivi → « épuisé »
  function sync(pid){const p=prod(pid);if(!p)return;const ss=E().stock.filter(s=>s.pid===pid);if(!ss.length)return;
   const tot=ss.reduce((a,s)=>a+s.qty,0);p.out=tot<=0;p.stockQty=tot;p.outSizes=ss.filter(s=>s.qty<=0&&s.variant).map(s=>s.variant)}
- const view=s=>({...s,label:label(s),product:prod(s.pid)?.name||'',img:prod(s.pid)?.imgs?.[0]||'',value:s.qty*s.cmp,alert:s.qty<=s.min});
+  const view=s=>({...s,label:label(s),product:prod(s.pid)?.name||'',img:pimg(s.pid,s.variant),value:s.qty*s.cmp,alert:s.qty<=s.min});
  const IMG=X.img||path.join(__dirname,'public','img');
  const savePhoto=(data)=>{const m=String(data||'').match(/^data:image\/(jpeg|jpg|png|webp);base64,(.+)$/);if(!m)return null;
   const buf=Buffer.from(m[2],'base64');if(buf.length>4e6)throw[400,'Photo trop lourde (4 Mo max)'];const n='rec_'+id()+'.'+(m[1]==='png'?'png':'jpg');fs.writeFileSync(path.join(IMG,n),buf);return '/img/'+n};
@@ -46,7 +48,7 @@ module.exports=function(routes,X){
    l.freight=Math.round(freight*wf);l.other=Math.round(other*wv);l.total=l.goods+l.freight+l.other;l.unitCost=Math.round(l.total/(+l.qty||1))});
   Object.assign(po,{rate,goods,measure,freightAuto,freight,other,total:goods+freight+other,allocBy:sumKey>0?(sea?'volume':'poids'):'quantité'});return dry?po:po}
  const tot=sa=>sa.items.reduce((a,i)=>a+i.qty*i.price,0);
- const sv=sa=>{const t=tot(sa),c=sa.items.reduce((a,i)=>a+(i.cost||0)*i.qty,0);return{...sa,total:t,cost:sa.picked?c:null,margin:sa.picked?t-c:null,pct:sa.picked&&t?Math.round(100*(t-c)/t):null}};
+  const sv=sa=>{const t=tot(sa),c=sa.items.reduce((a,i)=>a+(i.cost||0)*i.qty,0);return{...sa,items:sa.items.map(i=>({...i,img:pimg(i.pid,i.variant)})),total:t,cost:sa.picked?c:null,margin:sa.picked?t-c:null,pct:sa.picked&&t?Math.round(100*(t-c)/t):null}};
  function syncSite(){const e=E(),db=X.db();for(const o of db.orders||[]){if(e.sales.some(s=>s.ref===o.id))continue;
   e.sales.unshift({id:id(),ref:o.id,no:o.id,source:'site',date:o.date,name:o.name||'',phone:o.phone||'',address:o.address||'',zone:'',note:'',status:'nouvelle',dates:{nouvelle:o.date},
    items:o.items.map(i=>({pid:i.id,name:i.name,variant:[i.size?'Taille '+i.size:'',i.color||''].filter(Boolean).join(' / '),qty:i.qty,price:i.price}))})}e.sales.sort((a,b)=>b.date-a.date)}
@@ -109,7 +111,7 @@ module.exports=function(routes,X){
    move(u,s,t,sign*qn,{reason:b.reason,cost:t==='ajustement'&&sign>0?(+b.cost||s.cmp):undefined});audit(u,'Mouvement '+t,label(s),(sign*qn)+' — '+b.reason);S();return view(s)},
   'GET /api/erp/moves':(q,b,u)=>{can(u,0,1);let r=E().moves;if(q.type)r=r.filter(m=>m.type===q.type);if(q.sid)r=r.filter(m=>m.sid===q.sid);return r.slice(0,+q.limit||500)},
   // Commandes fournisseurs (version minimale pour la réception ; étape 2 = cycle complet + coût de revient)
-  'GET /api/erp/pos':(q,b,u)=>{can(u);return E().pos},
+  'GET /api/erp/pos':(q,b,u)=>{can(u);return E().pos.map(po=>({...po,lines:(po.lines||[]).map(l=>({...l,img:pimg(l.pid,l.variant)}))}))},
   'POST /api/erp/pos':(q,b,u)=>{can(u,'stock');const e=E();let po=b.id&&e.pos.find(p=>p.id===b.id);const isNew=!po;
    if(po&&po.receptions.length)throw[400,'Commande déjà en réception : coûts figés'];if(!b.lines?.length)throw[400,'Au moins une ligne'];
    if(isNew)po={id:id(),status:'brouillon',created:Date.now(),dates:{brouillon:Date.now()},receptions:[]};
@@ -191,7 +193,7 @@ module.exports=function(routes,X){
   // ---- Recettes : remise de caisse quotidienne par livreur ----
   'GET /api/erp/cash':(q,b,u)=>{can(u);const e=E(),day=q.day||dayOf(Date.now());const rows={};
    for(const s of e.sales){if(s.status!=='livrée/payée'||!s.paid||!s.delivery||dayOf(s.paid.date)!==day)continue;const r=rows[s.delivery.courier]??={courier:s.delivery.courier,name:s.delivery.courierName,phone:s.delivery.courierPhone,expected:{'espèces':0,Wave:0,'Orange Money':0},fees:0,sales:[]};
-    r.expected[s.paid.method]+=s.paid.amount;r.fees+=s.delivery.fee||0;r.sales.push({no:s.no,name:s.name,amount:s.paid.amount,method:s.paid.method})}
+    r.expected[s.paid.method]+=s.paid.amount;r.fees+=s.delivery.fee||0;r.sales.push({no:s.no,name:s.name,amount:s.paid.amount,method:s.paid.method,items:(s.items||[]).map(i=>({name:i.name,variant:i.variant,img:pimg(i.pid,i.variant)}))})}
    for(const c of e.cash.filter(c=>c.day===day))rows[c.courier]??={courier:c.courier,name:c.name,phone:'',expected:c.expected,fees:0,sales:[]};
    const list=Object.values(rows).map(r=>{const st=e.cash.find(c=>c.day===day&&c.courier===r.courier);return{...r,settlement:st||null}});
    return{day,rows:list,history:e.cash.slice(0,200)}},
@@ -225,7 +227,7 @@ module.exports=function(routes,X){
    const paid=e.sales.filter(s=>s.status==='livrée/payée').map(sv),pd=s=>dayOf(s.paid?.date||s.date);
    const per=from=>{const L=paid.filter(s=>pd(s)>=from),ca=L.reduce((a,s)=>a+s.total,0),c=L.reduce((a,s)=>a+(s.cost||0),0);return{count:L.length,ca,margin:ca-c,pct:ca?Math.round(100*(ca-c)/ca):0,basket:L.length?Math.round(ca/L.length):0}};
    const ok=e.sales.filter(s=>s.status==='livrée/payée').length,ko=e.sales.filter(s=>['refusée','retournée'].includes(s.status)).length;
-   const st=e.stock.map(view);const top={};for(const s of paid)for(const i of s.items){const t=top[i.pid]??={pid:i.pid,name:i.name,img:prod(i.pid)?.imgs?.[0]||'',qty:0,ca:0};t.qty+=i.qty;t.ca+=i.qty*i.price}
+   const st=e.stock.map(view);const top={};for(const s of paid)for(const i of s.items){const t=top[i.pid]??={pid:i.pid,name:i.name,img:pimg(i.pid,i.variant),qty:0,ca:0};t.qty+=i.qty;t.ca+=i.qty*i.price}
    const last={};for(const m of e.moves){const k=m.sid;if(m.type==='vente')last[k]=Math.max(last[k]||0,m.date);if(m.qty>0&&m.type!=='retour')(last['in'+k]??=m.date,last['in'+k]=Math.min(last['in'+k],m.date))}
    const dormant=st.filter(s=>s.qty>0).map(s=>{const ref=last[s.id]||last['in'+s.id]||now;return{...s,lastSale:last[s.id]||null,days:Math.floor((now-ref)/864e5)}}).filter(s=>s.days>60).sort((a,b)=>b.days-a.days);
    const pos=e.pos.filter(p=>!/réceptionnée totale|clôturée/.test(p.status)).sort((a,b)=>String(a.eta||'9').localeCompare(String(b.eta||'9'))).map(p=>({id:p.id,no:p.no,supplier:p.supplier,mode:p.mode,status:p.status,eta:p.eta,total:p.total,late:p.eta&&p.eta<td&&!/arrivée|réceptionnée/.test(p.status)}));
@@ -261,7 +263,7 @@ module.exports=function(routes,X){
   const margin=ca-cost,pct=ca?Math.round(100*margin/ca):0;
   const received=e.sales.filter(s=>inR(s.date));
   const bySource={};received.forEach(s=>bySource[s.source]=(bySource[s.source]||0)+1);
-  const top={};for(const s of paid)for(const i of s.items){const t=top[i.pid]??={pid:i.pid,name:i.name,img:prod(i.pid)?.imgs?.[0]||'',qty:0,ca:0};t.qty+=i.qty;t.ca+=i.qty*i.price}
+  const top={};for(const s of paid)for(const i of s.items){const t=top[i.pid]??={pid:i.pid,name:i.name,img:pimg(i.pid,i.variant),qty:0,ca:0};t.qty+=i.qty;t.ca+=i.qty*i.price}
   const st=e.stock.map(view);
   const outs=st.filter(s=>s.qty<=0),low=st.filter(s=>s.qty>0&&s.alert);
   const last={};for(const m of e.moves){const k=m.sid;if(m.type==='vente')last[k]=Math.max(last[k]||0,m.date);if(m.qty>0&&m.type!=='retour')last['in'+k]=Math.min(last['in'+k]??m.date,m.date)}
@@ -271,7 +273,7 @@ module.exports=function(routes,X){
   const gaps=e.cash.filter(c=>c.totalGap&&inR(Date.parse(c.day+'T12:00:00Z'))).map(c=>({day:c.day,name:c.name||c.courier,totalGap:c.totalGap}));
   const pending=e.sales.filter(s=>['nouvelle','confirmée','préparée','en livraison'].includes(s.status));
   const pos=e.pos.filter(p=>!/réceptionnée totale|clôturée/.test(p.status)).map(p=>({no:p.no||'brouillon',status:p.status,eta:p.eta,total:p.total}));
-  return{from,to,ca,margin,pct,count:paid.length,basket:paid.length?Math.round(ca/paid.length):0,received:received.length,bySource,top:Object.values(top).sort((a,b)=>b.qty-a.qty||b.ca-a.ca).slice(0,5),outs:outs.map(s=>({label:s.label,qty:s.qty})),low:low.map(s=>({label:s.label,qty:s.qty,min:s.min})),dormant:dormant.map(s=>({label:s.label,days:s.days,qty:s.qty,value:s.value})),cash:{byMethod,total:Object.values(byMethod).reduce((a,b)=>a+b,0),gaps},pending:{count:pending.length,value:pending.reduce((a,s)=>a+tot(s),0)},pos}}
+  return{from,to,ca,margin,pct,count:paid.length,basket:paid.length?Math.round(ca/paid.length):0,received:received.length,bySource,top:Object.values(top).sort((a,b)=>b.qty-a.qty||b.ca-a.ca).slice(0,5),outs:outs.map(s=>({label:s.label,qty:s.qty,img:s.img})),low:low.map(s=>({label:s.label,qty:s.qty,min:s.min,img:s.img})),dormant:dormant.map(s=>({label:s.label,days:s.days,qty:s.qty,value:s.value,img:s.img})),cash:{byMethod,total:Object.values(byMethod).reduce((a,b)=>a+b,0),gaps},pending:{count:pending.length,value:pending.reduce((a,s)=>a+tot(s),0)},pos}}
  function reportText(r){const dd=d=>d.split('-').reverse().join('/');return ['📊 Rapport hebdo Universal Partner','Semaine du '+dd(r.from)+' au '+dd(r.to),
   'CA livré/payé : '+nF(r.ca)+' FCFA · marge '+nF(r.margin)+' ('+r.pct+' %) · '+r.count+' vente(s) · panier '+nF(r.basket)+' FCFA',
   'Commandes reçues : '+r.received+' (site '+(r.bySource.site||0)+', WhatsApp '+(r.bySource.whatsapp||0)+')',
