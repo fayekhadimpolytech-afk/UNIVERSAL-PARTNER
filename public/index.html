@@ -81,6 +81,12 @@ const S={token:localStorage.t,user:null,cart:JSON.parse(localStorage.cart2||'[]'
 const F=n=>new Intl.NumberFormat('fr-FR').format(n)+' FCFA',$=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const starsStr=a=>{const n=Math.max(0,Math.min(5,Math.round(+a||0)));return '★'.repeat(n)+'☆'.repeat(5-n)};
 const discPct=p=>p&&p.was&&p.tiers&&p.was>p.tiers[0].price?Math.round(100-100*p.tiers[0].price/p.was):0;
+const norm=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+const kidsOf=id=>S.meta.cats.filter(c=>c.parent===id).map(c=>c.id);
+const catScope=id=>id?[id,...kidsOf(id)]:[];
+const inCat=(p,id)=>!id||catScope(id).includes(p.cat);
+const hay=p=>norm((p.name||'')+' '+(p.desc||'')+' '+((p.keywords||[]).join(' '))+' '+((p.colors||[]).join(' ')));
+const matchQ=(p,q)=>!q||norm(q).split(/\s+/).filter(Boolean).every(w=>hay(p).includes(w));
 async function imp1688(f){const b=f.querySelector('button');b.disabled=true;b.textContent='Import en cours…';try{const p=await api('import-1688',{url:f.u.value,cat:f.cat.value});toast('Brouillon créé : '+p.name+(p.tiers?.[0]?.price?' — prix conseillé '+F(p.tiers[0].price):''));route()}catch(e){toast(e);b.disabled=false;b.textContent='Importer'}}
 async function impManual(f){const b=f.querySelector('button');b.disabled=true;b.textContent='Création…';try{const p=await api('import/manual',{name:f.name.value,cat:f.cat.value,cny:f.cny.value,imgs:f.imgs.value,colors:f.colors.value,sizes:f.sizes.value,desc:f.desc.value,specs:f.specs.value});toast('Brouillon créé : '+p.name+(p.tiers?.[0]?.price?' — prix conseillé '+F(p.tiers[0].price):''));route()}catch(e){toast(e);b.disabled=false;b.textContent='Créer le brouillon + prix conseillé'}}
 // --- Fiche produit par IA : photos réduites côté téléphone (max 1280 px, JPEG) avant envoi ---
@@ -96,6 +102,8 @@ async function setWas(id,v){const row=$('#pr_'+id);try{const p=await api('produc
 async function couponSave(f){try{await api('coupons',{code:f.code.value,type:f.type.value,value:f.value.value,min:f.min.value,maxUses:f.maxUses.value,expires:f.expires.value,active:f.active.checked});toast('Code promo enregistré');route()}catch(e){toast(e)}}
 async function couponDel(id){if(!confirm('Supprimer ce code promo ?'))return;try{await api('coupons/delete',{id});toast('Code supprimé');route()}catch(e){toast(e)}}
 async function couponToggle(id){const c=(window._cps||[]).find(x=>x.id===id);if(!c)return;try{await api('coupons',{id:c.id,code:c.code,type:c.type,value:c.value,min:c.min,maxUses:c.maxUses,expires:c.expires,active:!c.active});toast(c.active?'Code désactivé':'Code activé');route()}catch(e){toast(e)}}
+async function saveCats(f){const cats=[];for(let i=0;;i++){const el=f['c'+i+'_name'];if(!el)break;const name=el.value.trim();if(!name)continue;cats.push({id:(f['c'+i+'_id']||{}).value||'',name,icon:(f['c'+i+'_icon']||{}).value||'',parent:(f['c'+i+'_parent']||{}).value||null})}
+ try{await api('cats',{cats});toast('Catégories enregistrées');await load();route()}catch(e){toast(e)}}
 const img=(p,i=0,c='')=>p.imgs?.[i]?`<img src="${p.imgs[i]}" alt="${esc(p.name)}" loading="lazy" class="${c}">`:`<div class="emo ${c}">${p.img}</div>`;
 // Rupture : stock ERP (p.out / p.outSizes) OU marquage manuel (Gestion UP : p.sold / p.soldSizes / p.soldColors). Le manuel prime.
 const soldOut=p=>!!(p&&(p.out||p.sold));
@@ -127,13 +135,29 @@ return `<div class="wrap"><div class="hero"><div><span class="pill">✨ Nouvelle
 <section><div class="sh"><div><span class="pill">✨ La collection</span><h2 style="margin-top:10px">Nos modèles</h2></div><a href="#/shop" class="btn ghost">Tout voir</a></div><div class="grid">${best.slice(0,8).map(card).join('')}</div></section>
 <section><div class="band rv"><div><span class="pill" style="color:var(--ink)">🏪 Revendeurs, hôtels, boutiques</span><h2>Plus vous commandez,<br>moins vous payez.</h2><p style="color:#ccc;line-height:1.6">Prix dégressifs automatiques sur tous nos produits, et devis sur mesure pour les grosses quantités.</p><a class="btn rose" href="#/gros">Demander un devis →</a></div>
 <div class="tiers"><div><span class="small">1 à 9 pièces</span><b>Prix</b><span class="small">public</span></div><div><span class="small">10 à 49 pièces</span><b>−10%</b><span class="small">automatique</span></div><div><span class="small">50 pièces et +</span><b>−20%</b><span class="small">automatique</span></div></div></div></section></div>`},
-async shop(q){const p=new URLSearchParams(q);const ps=await api('products?'+p);const set=(k,v)=>{const n=new URLSearchParams(q);v?n.set(k,v):n.delete(k);return '#/shop?'+n};
-return `<div class="wrap"><section><h1 style="font-size:52px;margin:0 0 6px">${p.get('cat')?catName(p.get('cat')):p.get('q')?'« '+esc(p.get('q'))+' »':'Toute la collection'}</h1><p class="mute">${ps.length} modèle(s) · Livraison partout</p>
-<div class="filters"><a class="${!p.get('cat')?'on':''}" href="${set('cat')}">Tout</a>${S.meta.cats.map(c=>`<a class="${p.get('cat')==c.id?'on':''}" href="${set('cat',c.id)}">${c.name}</a>`).join('')}<div class="sp"></div>
-<select onchange="go(this.value)"><option value="${set('max')}">Tous les prix</option>${[3000,5000,7000].map(m=>`<option value="${set('max',m)}" ${p.get('max')==m?'selected':''}>Moins de ${F(m)}</option>`)}</select>
-<select onchange="go(this.value)">${[['','Recommandés'],['price_asc','Prix croissant'],['price_desc','Prix décroissant'],['new','Nouveautés']].map(([a,b])=>`<option value="${set('sort',a)}" ${(p.get('sort')||'')==a?'selected':''}>${b}</option>`)}</select></div>
-<div class="grid">${(p.get('sort')?ps:ps.sort((a,b)=>(b.imgs?1:0)-(a.imgs?1:0))).map(card).join('')||'<p>Aucun modèle trouvé. <a href="#/gros"><u>Demandez-nous un devis</u></a>.</p>'}</div></section></div>`},
-async p(id){const p=await api('product?id='+id);S.cur=p;px('ViewContent',{content_ids:[p.id],content_name:p.name,content_type:'product',value:p.tiers[0].price});S.sz=null;S.col=null;S.q=1;const so=soldOut(p);const rel=S.all.filter(x=>x.cat==p.cat&&x.id!=p.id).slice(0,4);
+async shop(q){const p=new URLSearchParams(q);const cat=p.get('cat')||'',term=p.get('q')||'',sort=p.get('sort')||'',stock=p.get('stock')||'',color=p.get('color')||'',size=p.get('size')||'',max=+p.get('max')||0,promo=p.get('promo')==='1';
+const set=(k,v)=>{const n=new URLSearchParams(q);v?n.set(k,v):n.delete(k);return '#/shop?'+n};
+let r=S.all.filter(x=>inCat(x,cat)&&matchQ(x,term));
+if(max)r=r.filter(x=>x.tiers[0].price<=max);
+if(stock==='in')r=r.filter(x=>!soldOut(x));if(stock==='out')r=r.filter(x=>soldOut(x));
+if(color)r=r.filter(x=>(x.colors||[]).includes(color));if(size)r=r.filter(x=>(x.sizes||[]).includes(size));
+if(promo)r=r.filter(x=>discPct(x)>0);
+const srt={price_asc:(a,b)=>a.tiers[0].price-b.tiers[0].price,price_desc:(a,b)=>b.tiers[0].price-a.tiers[0].price,promo:(a,b)=>discPct(b)-discPct(a),new:(a,b)=>b.created-a.created}[sort];
+r=srt?[...r].sort(srt):[...r].sort((a,b)=>(b.imgs?1:0)-(a.imgs?1:0));
+const colors=[...new Set(S.all.flatMap(x=>x.colors||[]))].sort(),sizes=[...new Set(S.all.flatMap(x=>x.sizes||[]))].sort();
+const roots=S.meta.cats.filter(c=>!c.parent&&c.count>0),subs=cat?S.meta.cats.filter(c=>c.parent===cat&&c.count>0):[];
+return `<div class="wrap"><section><h1 style="font-size:52px;margin:0 0 6px">${cat?(S.meta.cats.find(c=>c.id===cat)?.name||catName(cat)):term?'« '+esc(term)+' »':'Toute la collection'}</h1><p class="mute">${r.length} modèle(s) · Livraison partout</p>
+<div class="filters"><a class="${!cat&&!promo?'on':''}" href="${set('cat')}">Tout</a>${roots.map(c=>`<a class="${cat===c.id?'on':''}" href="${set('cat',c.id)}">${c.name}</a>`).join('')}<a class="${promo?'on':''}" href="${set('promo',promo?'':'1')}">🔥 Promos</a></div>
+${subs.length?`<div class="filters" style="margin-top:-8px">${subs.map(c=>`<a class="${cat===c.id?'on':''}" href="${set('cat',c.id)}">${c.name}</a>`).join('')}</div>`:''}
+<div class="filters"><span class="small mute">Filtres :</span>
+<select onchange="go(this.value)"><option value="${set('stock','')}">Disponibilité : toutes</option><option value="${set('stock','in')}" ${stock==='in'?'selected':''}>En stock uniquement</option><option value="${set('stock','out')}" ${stock==='out'?'selected':''}>Sold out</option></select>
+<select onchange="go(this.value)"><option value="${set('max','')}">Tous les prix</option>${[3000,5000,7000,10000,15000].map(m=>`<option value="${set('max',m)}" ${max===m?'selected':''}>Moins de ${F(m)}</option>`).join('')}</select>
+${colors.length?`<select onchange="go(this.value)"><option value="${set('color','')}">Couleur : toutes</option>${colors.map(c=>`<option value="${set('color',c)}" ${color===c?'selected':''}>${esc(c)}</option>`).join('')}</select>`:''}
+${sizes.length?`<select onchange="go(this.value)"><option value="${set('size','')}">Taille : toutes</option>${sizes.map(c=>`<option value="${set('size',c)}" ${size===c?'selected':''}>${esc(c)}</option>`).join('')}</select>`:''}
+<select onchange="go(this.value)">${[['','Recommandés'],['price_asc','Prix croissant'],['price_desc','Prix décroissant'],['new','Nouveautés'],['promo','Meilleures promos']].map(([a,b])=>`<option value="${set('sort',a)}" ${sort===a?'selected':''}>${b}</option>`).join('')}</select>
+${(cat||term||stock||color||size||promo||sort||max)?'<a href="#/shop">✕ Réinitialiser</a>':''}</div>
+<div class="grid">${r.map(card).join('')||'<p>Aucun modèle trouvé. <a href="#/gros"><u>Demandez-nous un devis</u></a>.</p>'}</div></section></div>`},
+async p(id){const p=await api('product?id='+id);S.cur=p;px('ViewContent',{content_ids:[p.id],content_name:p.name,content_type:'product',value:p.tiers[0].price});S.sz=null;S.col=null;S.q=1;const so=soldOut(p);const parentCat=S.meta.cats.find(c=>c.id===p.cat)?.parent;const rk=x=>x.cat===p.cat?0:(kidsOf(p.cat).includes(x.cat)||(parentCat&&x.cat===parentCat))?1:2;const rel=S.all.filter(x=>x.id!==p.id&&!soldOut(x)).sort((a,b)=>rk(a)-rk(b)||(b.rating?.avg||0)-(a.rating?.avg||0)).slice(0,4);
 const th=(p.imgs||[null]).map((u,i)=>u?`<img src="${u}" class="${i?'':'on'}" onclick="document.querySelectorAll('.th img').forEach(x=>x.classList.remove('on'));this.classList.add('on');mainimg.src=this.src">`:'').join('');
 return `<div class="wrap"><p class="small mute" style="margin-top:22px"><a href="#/">Accueil</a> / <a href="#/shop?cat=${p.cat}">${catName(p.cat)}</a> / ${esc(p.name)}</p><div class="pp">
 <div class="gal"><div class="th">${th}</div><div class="main">${p.imgs?`<img id="mainimg" src="${p.imgs[0]}" alt="">`:`<div class="emo" style="position:static;height:100%;font-size:160px">${p.img}</div>`}</div></div>
@@ -200,6 +224,13 @@ ${rvAll.map(r=>{const pr=ps.find(p=>p.id===r.product);return `<div style="border
 <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="active" checked style="width:auto"> Actif</label>
 <button class="rose">Créer / mettre à jour</button></form>
 <table style="margin-top:10px"><tr><th>Code</th><th>Réduction</th><th>Conditions</th><th>Utilisations</th><th></th></tr>${cps.map(c=>`<tr><td><b>${esc(c.code)}</b>${c.active?'':' <span class="chip">inactif</span>'}</td><td>${c.type==='amount'?F(c.value):c.value+' %'}</td><td class="small mute">${c.min?'dès '+F(c.min):'sans minimum'}${c.expires?' · avant '+esc(c.expires):''}</td><td>${c.uses||0}${c.maxUses?' / '+c.maxUses:''}</td><td><a onclick="couponToggle('${c.id}')" title="Activer/désactiver">${c.active?'⏸':'▶️'}</a> <a onclick="couponDel('${c.id}')">🗑</a></td></tr>`).join('')||'<tr><td colspan="5" class="mute">Aucun code promo.</td></tr>'}</table></div>
+<div class="box" style="margin-top:18px"><h3 style="margin-top:0">🗂️ Catégories & sous-catégories</h3>
+<p class="small mute">Deux niveaux. Une catégorie sans produit n'apparaît pas sur la boutique. Pour retirer une catégorie, videz son nom (ses produits seront rattachés à la 1re catégorie principale).</p>
+<form class="form" onsubmit="event.preventDefault();saveCats(this)">
+<table><tr><th>Nom</th><th>Icône</th><th>Rattachée à</th><th>Produits</th></tr>
+${S.meta.cats.map((c,i)=>`<tr><td><input name="c${i}_name" value="${esc(c.name)}" style="min-width:150px"><input type="hidden" name="c${i}_id" value="${c.id}"></td><td><input name="c${i}_icon" value="${esc(c.icon||'')}" style="width:60px"></td><td><select name="c${i}_parent"><option value="">— principale —</option>${S.meta.cats.filter(x=>!x.parent&&x.id!==c.id).map(x=>`<option value="${x.id}" ${c.parent===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select></td><td>${c.count}</td></tr>`).join('')}
+<tr><td><input name="c${S.meta.cats.length}_name" placeholder="Nouvelle catégorie"></td><td><input name="c${S.meta.cats.length}_icon" placeholder="🏷️" style="width:60px"></td><td><select name="c${S.meta.cats.length}_parent"><option value="">— principale —</option>${S.meta.cats.filter(x=>!x.parent).map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select></td><td></td></tr>
+</table><button class="rose" style="margin-top:8px">Enregistrer les catégories</button></form></div>
 <div class="two" style="margin-top:18px"><form class="box form" onsubmit="event.preventDefault();api('settings',{whatsapp:this.w.value}).then(load).then(()=>toast('Numéro WhatsApp enregistré'))"><h3 style="margin-top:0">🟢 Numéro WhatsApp de UP</h3><input name="w" placeholder="Ex : 221771234567 (indicatif sans +)" value="${esc(S.meta.settings?.whatsapp||'')}"><button>Enregistrer</button><p class="small mute">Les boutons « Commander sur WhatsApp » ouvrent une conversation avec ce numéro.</p></form>
 <form class="box form" onsubmit="event.preventDefault();chpw(this)"><h3 style="margin-top:0">🔒 Changer le mot de passe</h3><input name="old" type="password" placeholder="Mot de passe actuel" required><input name="pass" type="password" placeholder="Nouveau mot de passe (10 caractères min.)" minlength="10" required><button>Changer</button></form></div>
 <div class="two" style="margin-top:18px"><form class="box form" onsubmit="event.preventDefault();api('tmapi',{key:this.k.value}).then(()=>{toast('Clé TMAPI enregistrée');route()}).catch(toast)"><h3 style="margin-top:0">🔑 Clé TMAPI</h3><input name="k" type="password" autocomplete="off" placeholder="${tk.set?'Clé enregistrée ('+tk.hint+') — coller pour remplacer':'Coller la clé API TMAPI'}" required><button>Enregistrer</button><p class="small mute">Stockée sur le serveur, jamais réaffichée.</p></form>

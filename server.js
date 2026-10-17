@@ -7,6 +7,11 @@ if(process.env.DATA_DIR&&!fs.existsSync(DB)&&fs.existsSync(path.join(__dirname,'
 const id=()=>crypto.randomBytes(6).toString('hex');
 const hash=p=>crypto.createHash('sha256').update('up$'+p).digest('hex');
 const defZones=()=>[{id:'partout',name:'Livraison gratuite partout (Sénégal et international)',fee:0}];
+// Arborescence de catégories proposée (2 niveaux) — appliquée une fois, éditable dans Gestion UP
+const PROPOSED_SUBCATS=[['femme-pantoufles','Pantoufles & chaussons femme','🥿','femme'],['femme-mules','Mules & claquettes femme','🩴','femme'],['femme-beaute','Beauté & soins','💅','femme'],['homme-pantoufles','Pantoufles & chaussons homme','🥿','homme'],['homme-mules','Mules & claquettes homme','🩴','homme'],['enfant-bebe','Chaussons bébé','👶','enfant'],['enfant-pantoufles','Pantoufles enfant','🧸','enfant'],['info-souris','Souris & claviers','🖱️','informatique'],['info-accessoires','Accessoires bureau','⌨️','informatique'],['maison-entretien','Entretien & nettoyage','🧽','maison'],['maison-cuisine','Cuisine & rangement','🍽️','maison']];
+function migrateCats(){if(db.seedTree==='2')return;const ids=new Set(db.cats.map(c=>c.id));db.cats.forEach(c=>{if(c.parent===undefined)c.parent=null});
+ for(const s of PROPOSED_SUBCATS)if(!ids.has(s[0])&&ids.has(s[3])){db.cats.push({id:s[0],name:s[1],icon:s[2],parent:s[3]});ids.add(s[0])}
+ db.seedTree='2';console.log('Catégories : arborescence proposée appliquée')}
 function seed(){
  const cats=[['femme','Femme','👡'],['homme','Homme','🥿'],['enfant','Enfant','🧸']].map(([id,name,icon])=>({id,name,icon}));
  const sellers=[{id:'s1',name:'UNIVERSAL PARTNER',email:'admin@up.sn',pass:hash(process.env.UP_ADMIN_PASS||crypto.randomBytes(9).toString('base64url')),role:'admin',country:'Sénégal',verified:true,years:8}];
@@ -34,7 +39,8 @@ const rcall=async(cmd)=>{const r=await fetch(RU,{method:'POST',headers:{Authoriz
 let db=fs.existsSync(DB)?JSON.parse(fs.readFileSync(DB)):seed();db.zones=defZones();
 let st=null;const save=()=>{fs.writeFileSync(DB+'.tmp',JSON.stringify(db,null,1));fs.renameSync(DB+'.tmp',DB);if(RU&&RT){clearTimeout(st);st=setTimeout(()=>rcall(['SET','up-db',JSON.stringify(db)]).catch(e=>console.error('Redis',e.message)),800)}};
 const boot=async()=>{if(RU&&RT){try{const v=await rcall(['GET','up-db']);if(v){db=JSON.parse(v);db.zones=defZones();console.log('Données chargées depuis Redis')}}catch(e){console.error('Redis indisponible',e.message)}}
- if(process.env.ADMIN_PASS){const a=db.users.find(u=>u.role==='admin');if(a)a.pass=hash(process.env.ADMIN_PASS)}save()};
+ if(process.env.ADMIN_PASS){const a=db.users.find(u=>u.role==='admin');if(a)a.pass=hash(process.env.ADMIN_PASS)}
+ try{migrateCats()}catch(e){console.error('migrate',e.message)}save()};
 const pub=u=>u&&({courier:u.courier,id:u.id,name:u.name,email:u.email,role:u.role,country:u.country,verified:u.verified,years:u.years});
 const priceFor=(p,q)=>[...p.tiers].reverse().find(t=>q>=t.min)?.price??p.tiers[0].price;
 const couponFind=c=>{const k=String(c||'').trim().toUpperCase();return k?(db.coupons||[]).find(x=>String(x.code||'').toUpperCase()===k):null};
@@ -44,7 +50,8 @@ const REVOK=r=>r.status!=='en attente'&&r.status!=='rejeté';
 const ratingFor=pid=>{const rs=db.reviews.filter(r=>r.product===pid&&REVOK(r)),count=rs.length;return{avg:count?Math.round(rs.reduce((s,r)=>s+r.stars,0)/count*10)/10:0,count}};
 const withSeller=p=>{const r=ratingFor(p.id);return{...p,sellerInfo:pub(db.users.find(u=>u.id===p.seller)),rating:r,reviews:db.reviews.filter(x=>x.product===p.id&&REVOK(x)).map(x=>({id:x.id,user:x.user,stars:x.stars,text:x.text,date:x.date}))}};
 const routes={
- 'GET /api/meta':()=>({settings:{whatsapp:db.settings?.whatsapp||'',pixel:db.settings?.pixel||''},zones:db.zones,cats:db.cats.map(c=>({...c,count:db.products.filter(p=>p.cat===c.id&&!p.draft).length})),sellers:db.users.filter(u=>u.role==='admin').map(pub)}),
+ 'GET /api/meta':()=>{const live=db.products.filter(p=>!p.draft),par=id=>db.cats.find(c=>c.id===id)?.parent,n=c=>live.filter(p=>p.cat===c.id||par(p.cat)===c.id).length;
+  return{settings:{whatsapp:db.settings?.whatsapp||'',pixel:db.settings?.pixel||''},zones:db.zones,cats:db.cats.map(c=>({...c,count:n(c)})),sellers:db.users.filter(u=>u.role==='admin').map(pub)}},
  'GET /api/products':(q,b,u)=>{let r=u?.role==='admin'&&q.all?db.products:db.products.filter(p=>!p.draft);
   if(q.q){const s=q.q.toLowerCase();r=r.filter(p=>(p.name+p.desc).toLowerCase().includes(s))}
   if(q.cat)r=r.filter(p=>p.cat===q.cat);if(q.seller)r=r.filter(p=>p.seller===q.seller);
@@ -124,6 +131,16 @@ const routes={
  'POST /api/coupons/delete':(q,b,u)=>{need(u,'admin');db.coupons=(db.coupons||[]).filter(x=>x.id!==b.id);save();return{ok:true}},
  'POST /api/coupon/check':(q,b,u)=>{const c=couponFind(b.code),sub=Math.max(0,Math.round(+b.sub||0));const why=couponWhy(c,sub);if(why)throw[400,why];
   const disc=couponDisc(c,sub);if(disc<=0)throw[400,'Code promo sans effet sur ce panier'];return{ok:true,code:c.code,type:c.type,value:c.value,disc,total:Math.max(0,sub-disc)}},
+ // Catégories & sous-catégories (2 niveaux)
+ 'POST /api/cats':(q,b,u)=>{need(u,'admin');if(!Array.isArray(b.cats))throw[400,'Format invalide'];
+  const seen=new Set(),next=b.cats.filter(c=>String(c.name||'').trim()).map(c=>{let i=String(c.id||'').trim();if(!i||seen.has(i))i=crypto.randomBytes(3).toString('hex');seen.add(i);
+   return{id:i,name:String(c.name).trim().slice(0,40),icon:String(c.icon||'🏷️').trim().slice(0,4)||'🏷️',parent:c.parent?String(c.parent):null}});
+  if(!next.length)throw[400,'Au moins une catégorie'];
+  const ids=new Set(next.map(c=>c.id)),roots=new Set(next.filter(c=>!c.parent||!ids.has(c.parent)).map(c=>c.id));
+  next.forEach(c=>{if(c.parent&&(!ids.has(c.parent)||!roots.has(c.parent)||c.parent===c.id))c.parent=null});
+  const rootCat=next.find(c=>!c.parent)||next[0];db.cats=next;let moved=0;
+  db.products.forEach(p=>{if(!ids.has(p.cat)){p.cat=rootCat.id;moved++}});
+  save();return{ok:true,cats:db.cats,moved}},
  'POST /api/products':(q,b,u)=>{need(u,'admin');const base=+b.price,moq=Math.max(1,+b.moq||1);
   const p={id:id(),name:b.name,cat:b.cat,seller:u.id,unit:b.unit||'unité',moq,img:b.img||'🥿',imgs:b.imgUrl?[b.imgUrl]:undefined,sizes:(b.sizes||'36,37,38,39,40,41').split(',').map(x=>x.trim()).filter(Boolean),desc:b.desc||'',sold:0,created:Date.now(),
    tiers:b.tiers?.length?b.tiers:[{min:moq,price:base},{min:moq*10,price:Math.round(base*.92)},{min:moq*50,price:Math.round(base*.85)}]};
