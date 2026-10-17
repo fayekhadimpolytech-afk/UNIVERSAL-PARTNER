@@ -214,9 +214,12 @@ const routes={
  'POST /api/pay/init':async(q,b,u)=>{const o=db.orders.find(x=>x.id===b.order);if(!o)throw[404,'Commande introuvable'];if(!db.settings?.payEnabled)throw[400,'Paiement en ligne non activé'];
   throw[501,'Passerelle en préparation : à activer dès que le compte marchand est fourni (mode test puis production).']},
  // ---- Statistiques (mesure maison, sans cookie tiers) ----
- 'POST /api/track':(q,b,u)=>{const t=String(b.t||''),s=(db.stats=db.stats||{days:{},views:{},adds:{}}),d=dayKey(),day=s.days[d]??(s.days[d]={v:0,pv:0,ac:0});
+ 'POST /api/track':(q,b,u,req)=>{const t=String(b.t||''),s=(db.stats=db.stats||{days:{},views:{},adds:{}}),d=dayKey(),day=s.days[d]??(s.days[d]={v:0,pv:0,ac:0});
   if(t==='visit'){day.v++;return{ok:true}}if(t==='view'){day.pv++;if(b.id)s.views[b.id]=(s.views[b.id]||0)+1;return{ok:true}}
-  if(t==='add'){day.ac++;if(b.id)s.adds[b.id]=(s.adds[b.id]||0)+1;return{ok:true}}return{ok:false}},
+  if(t==='add'){day.ac++;if(b.id)s.adds[b.id]=(s.adds[b.id]||0)+1;
+   fbCapi('AddToCart',b.eid||('add-'+Date.now()),{},req,{content_ids:[b.id].filter(Boolean),content_type:'product',value:+b.value||0,num_items:+b.qty||1},b.url).catch(()=>{});return{ok:true}}
+  if(t==='contact'){fbCapi('Contact',b.eid||('ct-'+Date.now()),{},req,{content_name:'WhatsApp'},b.url).catch(()=>{});return{ok:true}}
+  return{ok:false}},
  'GET /api/stats':(q,b,u)=>{need(u,'admin');const s=db.stats||{days:{},views:{},adds:{}},N=Math.min(90,Math.max(7,+q.days||30)),days=[];
   for(let i=N-1;i>=0;i--)days.push(new Date(Date.now()-i*864e5).toISOString().slice(0,10));
   const byDay={};days.forEach(d=>byDay[d]={d,orders:0,rev:0,disc:0,v:(s.days[d]?.v)||0,pv:(s.days[d]?.pv)||0,ac:(s.days[d]?.ac)||0});
