@@ -37,7 +37,9 @@ const boot=async()=>{if(RU&&RT){try{const v=await rcall(['GET','up-db']);if(v){d
  if(process.env.ADMIN_PASS){const a=db.users.find(u=>u.role==='admin');if(a)a.pass=hash(process.env.ADMIN_PASS)}save()};
 const pub=u=>u&&({courier:u.courier,id:u.id,name:u.name,email:u.email,role:u.role,country:u.country,verified:u.verified,years:u.years});
 const priceFor=(p,q)=>[...p.tiers].reverse().find(t=>q>=t.min)?.price??p.tiers[0].price;
-const withSeller=p=>({...p,sellerInfo:pub(db.users.find(u=>u.id===p.seller)),reviews:db.reviews.filter(r=>r.product===p.id)});
+const REVOK=r=>r.status!=='en attente'&&r.status!=='rejeté';
+const ratingFor=pid=>{const rs=db.reviews.filter(r=>r.product===pid&&REVOK(r)),count=rs.length;return{avg:count?Math.round(rs.reduce((s,r)=>s+r.stars,0)/count*10)/10:0,count}};
+const withSeller=p=>{const r=ratingFor(p.id);return{...p,sellerInfo:pub(db.users.find(u=>u.id===p.seller)),rating:r,reviews:db.reviews.filter(x=>x.product===p.id&&REVOK(x)).map(x=>({id:x.id,user:x.user,stars:x.stars,text:x.text,date:x.date}))}};
 const routes={
  'GET /api/meta':()=>({settings:{whatsapp:db.settings?.whatsapp||'',pixel:db.settings?.pixel||''},zones:db.zones,cats:db.cats.map(c=>({...c,count:db.products.filter(p=>p.cat===c.id&&!p.draft).length})),sellers:db.users.filter(u=>u.role==='admin').map(pub)}),
  'GET /api/products':(q,b,u)=>{let r=u?.role==='admin'&&q.all?db.products:db.products.filter(p=>!p.draft);
@@ -96,7 +98,17 @@ const routes={
  'POST /api/messages':(q,b,u)=>{need(u);if(!b.to||!b.text)throw[400,'Message vide'];const m={id:id(),from:u.id,to:b.to,text:b.text,product:b.product,date:Date.now()};db.messages.push(m);save();return m},
  'GET /api/messages':(q,b,u)=>{need(u);const ms=db.messages.filter(m=>m.from===u.id||m.to===u.id);const conv={};
   ms.forEach(m=>{const o=m.from===u.id?m.to:m.from;(conv[o]??=({with:pub(db.users.find(x=>x.id===o)),msgs:[]})).msgs.push(m)});return Object.values(conv)},
- 'POST /api/reviews':(q,b,u)=>{need(u);const r={id:id(),product:b.product,user:u.name,stars:Math.min(5,Math.max(1,+b.stars)),text:b.text,date:Date.now()};db.reviews.push(r);save();return r},
+ // Avis clients : tout le monde peut proposer un avis (nom requis) ; publication après modération dans Gestion UP
+ 'GET /api/reviews':(q,b,u)=>{if(q.all&&u?.role==='admin')return[...db.reviews].sort((a,b)=>b.date-a.date);
+  return db.reviews.filter(r=>r.product===q.product&&REVOK(r)).sort((a,b)=>b.date-a.date).map(r=>({id:r.id,user:r.user,stars:r.stars,text:r.text,date:r.date}))},
+ 'POST /api/reviews':(q,b,u)=>{const name=String(b.name||u?.name||'').trim();if(!name)throw[400,'Votre nom est requis'];const pid=String(b.product||'');
+  if(!db.products.find(p=>p.id===pid))throw[400,'Produit inconnu'];const stars=Math.min(5,Math.max(1,+b.stars||0));if(!stars)throw[400,'Choisissez une note'];
+  const text=String(b.text||'').trim();if(text.length<3)throw[400,'Écrivez votre avis'];
+  const r={id:id(),product:pid,user:name.slice(0,40),email:String(b.email||u?.email||'').trim().slice(0,80),stars,text:text.slice(0,600),status:'en attente',date:Date.now()};
+  db.reviews.push(r);save();return{ok:true,status:r.status}},
+ 'POST /api/reviews/status':(q,b,u)=>{need(u,'admin');const r=db.reviews.find(x=>x.id===b.id);if(!r)throw[404,'Avis introuvable'];
+  if(!['publié','en attente','rejeté'].includes(b.status))throw[400,'Statut invalide'];r.status=b.status;save();return r},
+ 'POST /api/reviews/delete':(q,b,u)=>{need(u,'admin');db.reviews=db.reviews.filter(x=>x.id!==b.id);save();return{ok:true}},
  'POST /api/products':(q,b,u)=>{need(u,'admin');const base=+b.price,moq=Math.max(1,+b.moq||1);
   const p={id:id(),name:b.name,cat:b.cat,seller:u.id,unit:b.unit||'unité',moq,img:b.img||'🥿',imgs:b.imgUrl?[b.imgUrl]:undefined,sizes:(b.sizes||'36,37,38,39,40,41').split(',').map(x=>x.trim()).filter(Boolean),desc:b.desc||'',sold:0,created:Date.now(),
    tiers:b.tiers?.length?b.tiers:[{min:moq,price:base},{min:moq*10,price:Math.round(base*.92)},{min:moq*50,price:Math.round(base*.85)}]};
