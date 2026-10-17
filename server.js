@@ -40,18 +40,39 @@ let db=fs.existsSync(DB)?JSON.parse(fs.readFileSync(DB)):seed();db.zones=defZone
 let st=null;const save=()=>{fs.writeFileSync(DB+'.tmp',JSON.stringify(db,null,1));fs.renameSync(DB+'.tmp',DB);if(RU&&RT){clearTimeout(st);st=setTimeout(()=>rcall(['SET','up-db',JSON.stringify(db)]).catch(e=>console.error('Redis',e.message)),800)}};
 const boot=async()=>{if(RU&&RT){try{const v=await rcall(['GET','up-db']);if(v){db=JSON.parse(v);db.zones=defZones();console.log('Données chargées depuis Redis')}}catch(e){console.error('Redis indisponible',e.message)}}
  if(process.env.ADMIN_PASS){const a=db.users.find(u=>u.role==='admin');if(a)a.pass=hash(process.env.ADMIN_PASS)}
- try{migrateCats()}catch(e){console.error('migrate',e.message)}save()};
+ try{migrateCats()}catch(e){console.error('migrate',e.message)}
+ try{seedPages()}catch(e){console.error('pages',e.message)}save()};
 const pub=u=>u&&({courier:u.courier,id:u.id,name:u.name,email:u.email,role:u.role,country:u.country,verified:u.verified,years:u.years});
 const priceFor=(p,q)=>[...p.tiers].reverse().find(t=>q>=t.min)?.price??p.tiers[0].price;
 const couponFind=c=>{const k=String(c||'').trim().toUpperCase();return k?(db.coupons||[]).find(x=>String(x.code||'').toUpperCase()===k):null};
 function couponDisc(c,sub){if(!c||!c.active)return 0;if(c.expires&&Date.now()>Date.parse(c.expires+'T23:59:59'))return 0;if(c.maxUses&&(c.uses||0)>=c.maxUses)return 0;if(c.min&&sub<c.min)return 0;const d=c.type==='amount'?Math.round(+c.value||0):Math.round(sub*(+c.value||0)/100);return Math.max(0,Math.min(sub,d))}
 function couponWhy(c,sub){if(!c)return'Code promo inconnu';if(!c.active)return'Code promo désactivé';if(c.expires&&Date.now()>Date.parse(c.expires+'T23:59:59'))return'Code promo expiré';if(c.maxUses&&(c.uses||0)>=c.maxUses)return'Code promo déjà utilisé au maximum';if(c.min&&sub<c.min)return'Code promo valable dès '+c.min+' FCFA';return null}
+// ---- Email transactionnel (fournisseur pluggable : Brevo ou Resend) ----
+const mailCfg=()=>{const m=(db.secrets&&db.secrets.mail)||{};return{provider:m.provider==='resend'?'resend':'brevo',key:String(m.key||''),from:String(m.from||'Universal Partner <contact@universal-partner.com>')}};
+async function mail(to,subject,html,text){const c=mailCfg();if(!c.key)throw[400,'Envoi email non configuré (ajoute la clé dans Gestion UP → ✉️ Email)'];if(!to)throw[400,'Destinataire manquant'];
+ if(c.provider==='resend'){const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+c.key},body:JSON.stringify({from:c.from,to:[to],subject,html,text:text||''}),signal:AbortSignal.timeout(30000)});
+  if(!r.ok){const t=await r.text().catch(()=>'');throw[502,'Email (Resend) : '+t.slice(0,200)]}return true}
+ const m=/^\s*(.*?)\s*<([^>]+)>\s*$/.exec(c.from),sender={name:(m?m[1]:'Universal Partner')||'Universal Partner',email:m?m[2]:c.from};
+ const r=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'Content-Type':'application/json','api-key':c.key},body:JSON.stringify({sender,to:[{email:to}],subject,htmlContent:html,textContent:text||''}),signal:AbortSignal.timeout(30000)});
+ if(!r.ok){const t=await r.text().catch(()=>'');throw[502,'Email (Brevo) : '+t.slice(0,200)]}return true}
+const orderMailHtml=o=>'<div style="font-family:sans-serif;max-width:560px"><h2>Merci '+String(o.name||'').replace(/[<>&]/g,'')+' !</h2><p>Votre commande <b>'+o.id+'</b> est enregistrée.</p><ul>'+o.items.map(i=>'<li>'+String(i.name).replace(/[<>&]/g,'')+(i.size?' — taille '+i.size:'')+(i.color?' — '+i.color:'')+' × '+i.qty+' : <b>'+new Intl.NumberFormat('fr-FR').format(i.price*i.qty)+' FCFA</b></li>').join('')+'</ul><p>Total à payer à la livraison : <b>'+new Intl.NumberFormat('fr-FR').format(o.total)+' FCFA</b> (livraison gratuite).</p><p>Suivi : <a href="https://universal-partner.com/#/suivi?id='+o.id+'">universal-partner.com → Suivre ma commande</a> (n° '+o.id+', téléphone '+String(o.phone||'').replace(/[<>&]/g,'')+').</p><p>— Universal Partner</p></div>';
+// Pages de confiance / conformité (contenu éditable dans Gestion UP ; publiées seulement après validation)
+const PAGE_DEFS=[['commander','Comment commander'],['livraison','Conditions de livraison'],['retours','Retours & remboursement'],['cgv','Conditions générales de vente'],['confidentialite','Politique de confidentialité'],['mentions','Mentions légales'],['apropos','À propos']];
+function seedPages(){db.pages=db.pages||{};const t=(ti,b)=>'<h2>'+ti+'</h2>'+b;
+ const d={commander:t('Comment commander',"<ol><li>Choisissez vos produits et ajoutez-les au panier.</li><li>Remplissez vos coordonnées (nom, téléphone, adresse).</li><li>Validez : vous payez <b>à la livraison</b>, en espèces ou par Wave/Orange Money.</li></ol><p>Une question ? Écrivez-nous sur WhatsApp — nous répondons vite.</p>"),
+ livraison:t('Conditions de livraison',"<p>Livraison <b>gratuite</b> partout au Sénégal et à l'international. Délai habituel : 24 à 48 h à Dakar, 2 à 5 jours en région.</p><p>{{ADRESSE}} — contact : {{TEL}} / {{EMAIL}}.</p>"),
+ retours:t('Retours & remboursement',"<p>Un article défectueux ou non conforme ? Contactez-nous sous 7 jours : nous échangeons le produit ou vous remboursons.</p><p>Le produit doit être retourné dans son état d'origine.</p>"),
+ cgv:t('Conditions générales de vente',"<p>Les présentes conditions régissent les ventes de {{RAISON_SOCIALE}} ({{NINEA}}, {{RCCM}}) via le site universal-partner.com.</p><p>Prix en FCFA, livraison gratuite, paiement à la livraison (ou en ligne si activé). Toute commande vaut acceptation des présentes conditions.</p><p><i>À compléter et faire valider par votre conseil juridique.</i></p>"),
+ confidentialite:t('Politique de confidentialité',"<p>Nous collectons uniquement les données nécessaires à votre commande (nom, téléphone, adresse, email) et ne les revendons jamais.</p><p>Vous pouvez demander la suppression de vos données à {{EMAIL}}.</p>"),
+ mentions:t('Mentions légales',"<p>{{RAISON_SOCIALE}} — {{FORME_JURIDIQUE}}</p><p>NINEA : {{NINEA}} · RCCM : {{RCCM}}</p><p>Siège : {{ADRESSE}}</p><p>Contact : {{TEL}} · {{EMAIL}}</p>"),
+ apropos:t('À propos',"<p>Universal Partner sélectionne et importe des produits utiles pour les familles sénégalaises — maison, entretien, informatique, énergie — à prix justes, livrés gratuitement et payés à la réception.</p>")};
+ PAGE_DEFS.forEach(([id,title])=>{db.pages[id]=db.pages[id]||{id,title,html:d[id]||'',published:false}})}
 const REVOK=r=>r.status!=='en attente'&&r.status!=='rejeté';
 const ratingFor=pid=>{const rs=db.reviews.filter(r=>r.product===pid&&REVOK(r)),count=rs.length;return{avg:count?Math.round(rs.reduce((s,r)=>s+r.stars,0)/count*10)/10:0,count}};
 const withSeller=p=>{const r=ratingFor(p.id);return{...p,sellerInfo:pub(db.users.find(u=>u.id===p.seller)),rating:r,reviews:db.reviews.filter(x=>x.product===p.id&&REVOK(x)).map(x=>({id:x.id,user:x.user,stars:x.stars,text:x.text,date:x.date}))}};
 const routes={
  'GET /api/meta':()=>{const live=db.products.filter(p=>!p.draft),par=id=>db.cats.find(c=>c.id===id)?.parent,n=c=>live.filter(p=>p.cat===c.id||par(p.cat)===c.id).length;
-  return{settings:{whatsapp:db.settings?.whatsapp||'',pixel:db.settings?.pixel||''},zones:db.zones,cats:db.cats.map(c=>({...c,count:n(c)})),sellers:db.users.filter(u=>u.role==='admin').map(pub)}},
+  return{settings:{whatsapp:db.settings?.whatsapp||'',pixel:db.settings?.pixel||'',payEnabled:!!db.settings?.payEnabled},zones:db.zones,cats:db.cats.map(c=>({...c,count:n(c)})),pages:Object.values(db.pages||{}).filter(p=>p.published).map(p=>({id:p.id,title:p.title})),sellers:db.users.filter(u=>u.role==='admin').map(pub)}},
  'GET /api/products':(q,b,u)=>{let r=u?.role==='admin'&&q.all?db.products:db.products.filter(p=>!p.draft);
   if(q.q){const s=q.q.toLowerCase();r=r.filter(p=>(p.name+p.desc).toLowerCase().includes(s))}
   if(q.cat)r=r.filter(p=>p.cat===q.cat);if(q.seller)r=r.filter(p=>p.seller===q.seller);
@@ -70,7 +91,9 @@ const routes={
   let disc=0,coupon=null;const cc=couponFind(b.coupon);if(String(b.coupon||'').trim()&&!cc)throw[400,'Code promo inconnu'];if(cc){const why=couponWhy(cc,sub);if(why)throw[400,why];disc=couponDisc(cc,sub);if(disc>0){coupon={code:cc.code,disc};cc.uses=(cc.uses||0)+1}}
   const o={id:'UP'+Date.now().toString().slice(-7),buyer:u?.id||null,name:(b.name||u?.name||'').trim(),email:String(b.email||u?.email||'').trim().slice(0,80),items,ship,sub,disc,coupon,total:Math.max(0,sub-disc)+(ship||0),pay:'livraison',address:b.address,phone:b.phone,zone:'partout',
    status:'à payer à la livraison',date:Date.now()};
-  db.orders.push(o);save();try{ERP.notifyOrder({no:o.id,source:'site',name:o.name,phone:o.phone,address:o.address,zone:o.zone==='partout'?'':o.zone,items:o.items.map(i=>({name:i.name,variant:[i.size?'Taille '+i.size:'',i.color||''].filter(Boolean).join(' / '),qty:i.qty,price:i.price}))})}catch(e){console.error('notif',e)}return o},
+  db.orders.push(o);(db.carts||[]).forEach(c=>{if(!c.done&&((o.phone&&c.phone===String(o.phone).replace(/\D/g,''))||(o.email&&c.email===String(o.email).toLowerCase())))c.done=true});save();
+ if(o.email)mail(o.email,'Commande '+o.id+' reçue — Universal Partner',orderMailHtml(o)).catch(e=>console.error('mail',e&&e.message));
+ try{ERP.notifyOrder({no:o.id,source:'site',name:o.name,phone:o.phone,address:o.address,zone:o.zone==='partout'?'':o.zone,items:o.items.map(i=>({name:i.name,variant:[i.size?'Taille '+i.size:'',i.color||''].filter(Boolean).join(' / '),qty:i.qty,price:i.price}))})}catch(e){console.error('notif',e)}return o},
  'GET /api/order':(q)=>{const o=db.orders.find(o=>o.id===q.id&&o.phone.replace(/\D/g,'')===String(q.phone||'').replace(/\D/g,''));if(!o)throw[404,'Commande introuvable'];return o},
  'POST /api/password':(q,b,u)=>{need(u);if(u.pass!==hash(b.old||''))throw[400,'Mot de passe actuel incorrect'];if(String(b.pass||'').length<10)throw[400,'10 caractères minimum'];u.pass=hash(b.pass);for(const t in db.sessions)if(db.sessions[t]===u.id)delete db.sessions[t];save();return login(u)},
  'GET /api/tmapi':(q,b,u)=>{need(u,'admin');const k=db.secrets?.tmapi||'';return{set:!!k,hint:k?'••••'+k.slice(-4):''}},
@@ -141,6 +164,34 @@ const routes={
   const rootCat=next.find(c=>!c.parent)||next[0];db.cats=next;let moved=0;
   db.products.forEach(p=>{if(!ids.has(p.cat)){p.cat=rootCat.id;moved++}});
   save();return{ok:true,cats:db.cats,moved}},
+ // ---- Email, newsletter, paniers, pages, paiement ----
+ 'GET /api/mail':(q,b,u)=>{need(u,'admin');const c=mailCfg();return{provider:c.provider,from:c.from,set:!!c.key,hint:c.key?'••••'+c.key.slice(-4):''}},
+ 'POST /api/mail':(q,b,u)=>{need(u,'admin');const key=String(b.key||'').trim();if(key&&/\.\.\.|…|\s/.test(key))throw[400,'Clé email incomplète : copie-la entière, sans « … »'];
+  const cur=(db.secrets&&db.secrets.mail)||{};db.secrets={...db.secrets,mail:{provider:b.provider==='resend'?'resend':'brevo',key:key||cur.key||'',from:String(b.from||'').trim()||cur.from||'Universal Partner <contact@universal-partner.com>'}};save();return{set:!!db.secrets.mail.key}},
+ 'POST /api/mail/test':async(q,b,u)=>{need(u,'admin');const to=String(b.to||'').trim();if(!to)throw[400,'Adresse de test requise'];await mail(to,'Test Universal Partner','<p>Test d\'envoi depuis Gestion UP ✅</p>','Test');return{ok:true,to}},
+ 'POST /api/newsletter':(q,b,u)=>{const email=String(b.email||'').trim().toLowerCase();if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))throw[400,'Adresse email invalide'];
+  db.news=db.news||[];if(!db.news.some(x=>x.email===email))db.news.unshift({email,date:Date.now(),src:String(b.src||'site').slice(0,20)});save();return{ok:true}},
+ 'GET /api/news':(q,b,u)=>{need(u,'admin');return db.news||[]},
+ 'GET /api/news/export':(q,b,u)=>{need(u,'admin');const rows=['email,date'].concat((db.news||[]).map(x=>x.email+','+new Date(x.date).toISOString().slice(0,10)));
+  return{__raw:{type:'text/csv; charset=utf-8',name:'newsletter-up.csv',body:rows.join('\n')}}},
+ 'POST /api/cart/save':(q,b,u)=>{const phone=String(b.phone||'').replace(/\D/g,''),email=String(b.email||'').trim().toLowerCase();if(!phone&&!email)return{ok:false};
+  const items=(Array.isArray(b.items)?b.items:[]).slice(0,10).map(i=>({name:String(i.name||'').slice(0,80),qty:+i.qty||1,price:+i.price||0,size:String(i.size||''),color:String(i.color||'')}));
+  if(!items.length)return{ok:false};db.carts=db.carts||[];const key=phone||email,c=db.carts.find(x=>x.key===key&&!x.done);
+  const rec={key,name:String(b.name||'').slice(0,60),phone,email,items,total:items.reduce((s,i)=>s+i.qty*i.price,0),date:Date.now(),done:false,mailed:false};
+  if(c)Object.assign(c,rec);else db.carts.unshift(rec);save();return{ok:true}},
+ 'GET /api/carts':(q,b,u)=>{need(u,'admin');return (db.carts||[]).filter(x=>!x.done).slice(0,100)},
+ 'POST /api/cart/done':(q,b,u)=>{need(u,'admin');const c=(db.carts||[]).find(x=>x.key===b.key);if(c)c.done=true;save();return{ok:true}},
+ 'GET /api/pages':(q,b,u)=>{need(u,'admin');return PAGE_DEFS.map(([id,title])=>({...db.pages?.[id],id,title:db.pages?.[id]?.title||title}))},
+ 'GET /api/page':(q,b,u)=>{const p=db.pages?.[q.id];if(!p||!p.published)throw[404,'Page indisponible'];return{id:p.id,title:p.title,html:p.html}},
+ 'POST /api/pages':(q,b,u)=>{need(u,'admin');const id=String(b.id||'');if(!db.pages?.[id])throw[404,'Page inconnue'];
+  const p=db.pages[id];if(b.title!=null)p.title=String(b.title).slice(0,80);if(b.html!=null)p.html=String(b.html).slice(0,20000);if(b.published!=null)p.published=!!b.published;save();return p},
+ 'GET /api/pay':(q,b,u)=>{need(u,'admin');const c=(db.secrets&&db.secrets.pay)||{};return{provider:c.provider||'kkiapay',sandbox:c.sandbox!==false,set:!!c.key,hint:c.key?'••••'+c.key.slice(-4):'',enabled:!!db.settings?.payEnabled}},
+ 'POST /api/pay':(q,b,u)=>{need(u,'admin');const cur=(db.secrets&&db.secrets.pay)||{},key=String(b.key||'').trim();
+  db.secrets={...db.secrets,pay:{provider:['kkiapay','paydunya'].includes(b.provider)?b.provider:(cur.provider||'kkiapay'),key:key||cur.key||'',sandbox:b.sandbox!==false}};save();return{ok:true,set:!!db.secrets.pay.key}},
+ 'POST /api/pay/toggle':(q,b,u)=>{need(u,'admin');if(b.enabled&&!db.secrets?.pay?.key)throw[400,'Renseigne d\'abord la clé du compte marchand (Kkiapay/PayDunya)'];
+  db.settings={...db.settings,payEnabled:!!b.enabled};save();return{enabled:!!db.settings.payEnabled}},
+ 'POST /api/pay/init':async(q,b,u)=>{const o=db.orders.find(x=>x.id===b.order);if(!o)throw[404,'Commande introuvable'];if(!db.settings?.payEnabled)throw[400,'Paiement en ligne non activé'];
+  throw[501,'Passerelle en préparation : à activer dès que le compte marchand est fourni (mode test puis production).']},
  'POST /api/products':(q,b,u)=>{need(u,'admin');const base=+b.price,moq=Math.max(1,+b.moq||1);
   const p={id:id(),name:b.name,cat:b.cat,seller:u.id,unit:b.unit||'unité',moq,img:b.img||'🥿',imgs:b.imgUrl?[b.imgUrl]:undefined,sizes:(b.sizes||'36,37,38,39,40,41').split(',').map(x=>x.trim()).filter(Boolean),desc:b.desc||'',sold:0,created:Date.now(),
    tiers:b.tiers?.length?b.tiers:[{min:moq,price:base},{min:moq*10,price:Math.round(base*.92)},{min:moq*50,price:Math.round(base*.85)}]};
@@ -164,6 +215,9 @@ routes['POST /api/erp/users/delete']=(q,b,u)=>{need(u,'admin');db.users=db.users
 const backup=async()=>{const k=new Date().toISOString().slice(0,10).replace(/-/g,'');db.lastBackup=Date.now();const BK=path.join(DATA,'backups');fs.mkdirSync(BK,{recursive:true});fs.writeFileSync(path.join(BK,'backup-'+k+'.json'),JSON.stringify(db));fs.readdirSync(BK).filter(f=>/^backup-\d{8}\.json$/.test(f)).sort().slice(0,-30).forEach(f=>fs.unlinkSync(path.join(BK,f)));
  if(RU&&RT){await rcall(['SET','up-db-backup-'+k,JSON.stringify(db),'EX',String(30*86400)]).catch(e=>console.error('Backup',e.message))}};
 setInterval(()=>{if(!db.lastBackup||Date.now()-db.lastBackup>864e5)backup()},36e5);setTimeout(()=>{if(!db.lastBackup||Date.now()-db.lastBackup>864e5)backup()},6e4);
+// Relance email automatique des paniers non finalisés (au bout de ~20 h) — inerte tant que la clé email n'est pas configurée
+setInterval(()=>{if(!mailCfg().key)return;let n=0;(db.carts||[]).forEach(c=>{if(!c.done&&!c.mailed&&c.email&&Date.now()-c.date>20*36e5){c.mailed=true;n++;
+ mail(c.email,'Votre panier vous attend — Universal Partner','<p>Bonjour '+(c.name||'')+',</p><p>Votre panier chez Universal Partner n\'est pas finalisé. Total : <b>'+c.total+' FCFA</b> — livraison gratuite, paiement à la livraison.</p><p><a href="https://universal-partner.com/#/checkout">Reprendre ma commande</a></p><p>— Universal Partner</p>').catch(e=>console.error('relance',e&&e.message))}});if(n)save()},18e5);
 routes['POST /api/erp/backup']=async(q,b,u)=>{need(u,'admin');await backup();return{ok:true,date:db.lastBackup}};
 
 // ---- Import 1688 via TMAPI ----
