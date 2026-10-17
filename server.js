@@ -50,6 +50,12 @@ function couponWhy(c,sub){if(!c)return'Code promo inconnu';if(!c.active)return'C
 // ---- Email transactionnel (fournisseur pluggable : Brevo ou Resend) ----
 const dayKey=t=>new Date(t||Date.now()).toISOString().slice(0,10);
 const pixels=()=>{const s=db.settings||{};const a=(Array.isArray(s.pixels)&&s.pixels.length?s.pixels:(s.pixel?[s.pixel]:[])).map(v=>String(v||'').replace(/\D/g,'')).filter(Boolean);return [...new Set(a)]};
+// Code de base du pixel écrit DANS la page (indispensable pour que l'outil de configuration Meta le détecte)
+const pixelSnippet=()=>{const px=pixels();if(!px.length)return '';
+ return '<script>!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version="2.0";n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,"script","https://connect.facebook.net/en_US/fbevents.js");'
+  +px.map(id=>'fbq("init","'+id+'");').join('')+'fbq("track","PageView");</script>'
+  +px.map(id=>'<noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id='+id+'&amp;ev=PageView&amp;noscript=1"/></noscript>').join('')};
+const injectPixel=h=>h.includes('<!--UP_PIXEL-->')?h.replace('<!--UP_PIXEL-->',pixelSnippet()):h;
 const sha256=s=>crypto.createHash('sha256').update(String(s)).digest('hex');
 const capiCfg=()=>{const c=(db.secrets&&db.secrets.capi)||{};return{token:String(c.token||''),testCode:String(c.testCode||'')}};
 const normPhone=p=>{const d=String(p||'').replace(/\D/g,'');return d?(d.startsWith('221')?d:'221'+d):''};
@@ -386,6 +392,7 @@ const srv=http.createServer((req,res)=>{const url=new URL(req.url,'http://x'),q=
   fs.readFile(path.join(__dirname,'public','index.html'),(e,d)=>{
    let html=(e||!d)?('<!doctype html><meta http-equiv="refresh" content="0;url=/#/p/'+pid+'">'):d.toString();
    html=html.replace('</head>',og.join('\n')+'\n</head>');
+   html=injectPixel(html);
    if(p)html=html.replace('</body>','<script>location.replace("/#/p/'+pid+'")</script></body>');
    res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);
   });
@@ -395,6 +402,7 @@ const srv=http.createServer((req,res)=>{const url=new URL(req.url,'http://x'),q=
  if(url.pathname.startsWith('/img/')){const g=path.join(UPL,path.basename(url.pathname));if(fs.existsSync(g))f=g}
  if(!fs.existsSync(f))f=path.join(__dirname,'public/index.html');
  const mt=mime[path.extname(f)]||'text/html; charset=utf-8';
+ if(/text\/html/.test(mt)){res.writeHead(200,{'Content-Type':mt});return res.end(injectPixel(fs.readFileSync(f,'utf8')))}
  // En-têtes + support des requêtes Range (lecture/seek des vidéos sur mobile)
  const st=fs.statSync(f);
  const rg=/^bytes=(\d*)-(\d*)$/.exec(req.headers.range||'');
