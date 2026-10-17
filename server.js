@@ -48,8 +48,8 @@ const couponFind=c=>{const k=String(c||'').trim().toUpperCase();return k?(db.cou
 function couponDisc(c,sub){if(!c||!c.active)return 0;if(c.expires&&Date.now()>Date.parse(c.expires+'T23:59:59'))return 0;if(c.maxUses&&(c.uses||0)>=c.maxUses)return 0;if(c.min&&sub<c.min)return 0;const d=c.type==='amount'?Math.round(+c.value||0):Math.round(sub*(+c.value||0)/100);return Math.max(0,Math.min(sub,d))}
 function couponWhy(c,sub){if(!c)return'Code promo inconnu';if(!c.active)return'Code promo désactivé';if(c.expires&&Date.now()>Date.parse(c.expires+'T23:59:59'))return'Code promo expiré';if(c.maxUses&&(c.uses||0)>=c.maxUses)return'Code promo déjà utilisé au maximum';if(c.min&&sub<c.min)return'Code promo valable dès '+c.min+' FCFA';return null}
 // ---- Email transactionnel (fournisseur pluggable : Brevo ou Resend) ----
-const mailCfg=()=>{const m=(db.secrets&&db.secrets.mail)||{};return{provider:m.provider==='resend'?'resend':'brevo',key:String(m.key||''),from:String(m.from||'Universal Partner <contact@universal-partner.com>')}};
-async function mail(to,subject,html,text){const c=mailCfg();if(!c.key)throw[400,'Envoi email non configuré (ajoute la clé dans Gestion UP → ✉️ Email)'];if(!to)throw[400,'Destinataire manquant'];
+const dayKey=t=>new Date(t||Date.now()).toISOString().slice(0,10);
+const mailCfg=()=>{const m=(db.secrets&&db.secrets.mail)||{};return{provider:m.provider==='resend'?'resend':'brevo',key:String(m.key||''),from:String(m.from||'Universal Partner <contact@universal-partner.com>')}};async function mail(to,subject,html,text){const c=mailCfg();if(!c.key)throw[400,'Envoi email non configuré (ajoute la clé dans Gestion UP → ✉️ Email)'];if(!to)throw[400,'Destinataire manquant'];
  if(c.provider==='resend'){const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+c.key},body:JSON.stringify({from:c.from,to:[to],subject,html,text:text||''}),signal:AbortSignal.timeout(30000)});
   if(!r.ok){const t=await r.text().catch(()=>'');throw[502,'Email (Resend) : '+t.slice(0,200)]}return true}
  const m=/^\s*(.*?)\s*<([^>]+)>\s*$/.exec(c.from),sender={name:(m?m[1]:'Universal Partner')||'Universal Partner',email:m?m[2]:c.from};
@@ -192,6 +192,23 @@ const routes={
   db.settings={...db.settings,payEnabled:!!b.enabled};save();return{enabled:!!db.settings.payEnabled}},
  'POST /api/pay/init':async(q,b,u)=>{const o=db.orders.find(x=>x.id===b.order);if(!o)throw[404,'Commande introuvable'];if(!db.settings?.payEnabled)throw[400,'Paiement en ligne non activé'];
   throw[501,'Passerelle en préparation : à activer dès que le compte marchand est fourni (mode test puis production).']},
+ // ---- Statistiques (mesure maison, sans cookie tiers) ----
+ 'POST /api/track':(q,b,u)=>{const t=String(b.t||''),s=(db.stats=db.stats||{days:{},views:{},adds:{}}),d=dayKey(),day=s.days[d]??(s.days[d]={v:0,pv:0,ac:0});
+  if(t==='visit'){day.v++;return{ok:true}}if(t==='view'){day.pv++;if(b.id)s.views[b.id]=(s.views[b.id]||0)+1;return{ok:true}}
+  if(t==='add'){day.ac++;if(b.id)s.adds[b.id]=(s.adds[b.id]||0)+1;return{ok:true}}return{ok:false}},
+ 'GET /api/stats':(q,b,u)=>{need(u,'admin');const s=db.stats||{days:{},views:{},adds:{}},N=Math.min(90,Math.max(7,+q.days||30)),days=[];
+  for(let i=N-1;i>=0;i--)days.push(new Date(Date.now()-i*864e5).toISOString().slice(0,10));
+  const byDay={};days.forEach(d=>byDay[d]={d,orders:0,rev:0,disc:0,v:(s.days[d]?.v)||0,pv:(s.days[d]?.pv)||0,ac:(s.days[d]?.ac)||0});
+  (db.orders||[]).forEach(o=>{const k=dayKey(o.date);if(byDay[k]){byDay[k].orders++;byDay[k].rev+=o.total||0;byDay[k].disc+=o.disc||0}});
+  const series=days.map(d=>byDay[d]),sum=k=>series.reduce((a,x)=>a+(x[k]||0),0);
+  const agg={};(db.orders||[]).forEach(o=>(o.items||[]).forEach(i=>{const k=i.id||i.name;agg[k]=agg[k]||{id:i.id,name:i.name,qty:0,rev:0};agg[k].qty+=i.qty;agg[k].rev+=i.qty*(i.price||0)}));
+  const top=Object.values(agg).sort((a,b)=>b.rev-a.rev).slice(0,8);
+  const seen={};const views=Object.entries(s.views).map(([id,n])=>{const p=db.products.find(x=>x.id===id);return{id,n,name:p?p.name:'(produit supprimé)',rev:(agg[id]?.rev)||0}}).sort((a,b)=>b.n-a.n).slice(0,8);
+  const cats={};(db.orders||[]).forEach(o=>(o.items||[]).forEach(i=>{const p=db.products.find(x=>x.id===i.id),c=p?db.cats.find(c=>c.id===p.cat):null,k=c?c.name:'Autre';cats[k]=(cats[k]||0)+i.qty*(i.price||0)}));
+  const today=byDay[days[days.length-1]];
+  return{series,totals:{revenue:sum('rev'),orders:sum('orders'),discounts:sum('disc'),visits:sum('v'),views:sum('pv'),adds:sum('ac'),avg:sum('orders')?Math.round(sum('rev')/sum('orders')):0,conv:sum('v')?Math.round(1000*sum('orders')/sum('v'))/10:0},
+   today:today&&{orders:today.orders,rev:today.rev,v:today.v,pv:today.pv},top,views,cats:Object.entries(cats).map(([name,rev])=>({name,rev})).sort((a,b)=>b.rev-a.rev),
+   live:{products:db.products.filter(p=>!p.draft).length,drafts:db.products.filter(p=>p.draft).length,reviews:db.reviews.length,pending:db.reviews.filter(r=>r.status==='en attente').length,news:(db.news||[]).length,carts:(db.carts||[]).filter(c=>!c.done).length,coupons:(db.coupons||[]).filter(c=>c.active).length,stockOut:db.products.filter(p=>!p.draft&&(p.out||p.sold)).length}}},
  'POST /api/products':(q,b,u)=>{need(u,'admin');const base=+b.price,moq=Math.max(1,+b.moq||1);
   const p={id:id(),name:b.name,cat:b.cat,seller:u.id,unit:b.unit||'unité',moq,img:b.img||'🥿',imgs:b.imgUrl?[b.imgUrl]:undefined,sizes:(b.sizes||'36,37,38,39,40,41').split(',').map(x=>x.trim()).filter(Boolean),desc:b.desc||'',sold:0,created:Date.now(),
    tiers:b.tiers?.length?b.tiers:[{min:moq,price:base},{min:moq*10,price:Math.round(base*.92)},{min:moq*50,price:Math.round(base*.85)}]};
