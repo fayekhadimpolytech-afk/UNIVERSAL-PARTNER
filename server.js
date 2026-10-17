@@ -37,6 +37,9 @@ const boot=async()=>{if(RU&&RT){try{const v=await rcall(['GET','up-db']);if(v){d
  if(process.env.ADMIN_PASS){const a=db.users.find(u=>u.role==='admin');if(a)a.pass=hash(process.env.ADMIN_PASS)}save()};
 const pub=u=>u&&({courier:u.courier,id:u.id,name:u.name,email:u.email,role:u.role,country:u.country,verified:u.verified,years:u.years});
 const priceFor=(p,q)=>[...p.tiers].reverse().find(t=>q>=t.min)?.price??p.tiers[0].price;
+const couponFind=c=>{const k=String(c||'').trim().toUpperCase();return k?(db.coupons||[]).find(x=>String(x.code||'').toUpperCase()===k):null};
+function couponDisc(c,sub){if(!c||!c.active)return 0;if(c.expires&&Date.now()>Date.parse(c.expires+'T23:59:59'))return 0;if(c.maxUses&&(c.uses||0)>=c.maxUses)return 0;if(c.min&&sub<c.min)return 0;const d=c.type==='amount'?Math.round(+c.value||0):Math.round(sub*(+c.value||0)/100);return Math.max(0,Math.min(sub,d))}
+function couponWhy(c,sub){if(!c)return'Code promo inconnu';if(!c.active)return'Code promo désactivé';if(c.expires&&Date.now()>Date.parse(c.expires+'T23:59:59'))return'Code promo expiré';if(c.maxUses&&(c.uses||0)>=c.maxUses)return'Code promo déjà utilisé au maximum';if(c.min&&sub<c.min)return'Code promo valable dès '+c.min+' FCFA';return null}
 const REVOK=r=>r.status!=='en attente'&&r.status!=='rejeté';
 const ratingFor=pid=>{const rs=db.reviews.filter(r=>r.product===pid&&REVOK(r)),count=rs.length;return{avg:count?Math.round(rs.reduce((s,r)=>s+r.stars,0)/count*10)/10:0,count}};
 const withSeller=p=>{const r=ratingFor(p.id);return{...p,sellerInfo:pub(db.users.find(u=>u.id===p.seller)),rating:r,reviews:db.reviews.filter(x=>x.product===p.id&&REVOK(x)).map(x=>({id:x.id,user:x.user,stars:x.stars,text:x.text,date:x.date}))}};
@@ -56,8 +59,9 @@ const routes={
  'GET /api/me':(q,b,u)=>pub(u),
  'POST /api/orders':(q,b,u)=>{if(!b.items?.length)throw[400,'Panier vide'];if(!u&&(!b.name?.trim()||!b.phone?.trim()||!b.address?.trim()))throw[400,'Nom, téléphone et adresse requis'];if(!b.phone?.trim()||!b.address?.trim())throw[400,'Téléphone et adresse requis'];
   const items=b.items.map(i=>{const p=db.products.find(p=>p.id===i.id);if(!p||p.draft)throw[400,'Produit invalide'];if(p.out||p.sold)throw[400,'Sold out (rupture de stock) : '+p.name];if(p.sizes?.length&&!p.sizes.includes(i.size))throw[400,'Choisissez la taille : '+p.name];if(p.colors?.length&&!p.colors.includes(i.color))throw[400,'Choisissez la couleur : '+p.name];if((p.outSizes||[]).includes('Taille '+i.size)||(p.soldSizes||[]).includes(i.size))throw[400,'Taille '+i.size+' épuisée : '+p.name];if((p.soldColors||[]).includes(i.color))throw[400,'Couleur '+i.color+' épuisée : '+p.name];const qty=Math.max(+i.qty,p.moq);return{id:p.id,size:i.size||'',color:i.color||'',img:p.imgs?.[0]||p.img,name:p.name,seller:p.seller,qty,price:priceFor(p,qty)}});
-  const ship=0;
-  const o={id:'UP'+Date.now().toString().slice(-7),buyer:u?.id||null,name:(b.name||u?.name||'').trim(),items,ship,sub:items.reduce((s,i)=>s+i.qty*i.price,0),total:items.reduce((s,i)=>s+i.qty*i.price,0)+(ship||0),pay:'livraison',address:b.address,phone:b.phone,zone:'partout',
+  const ship=0,sub=items.reduce((s,i)=>s+i.qty*i.price,0);
+  let disc=0,coupon=null;const cc=couponFind(b.coupon);if(String(b.coupon||'').trim()&&!cc)throw[400,'Code promo inconnu'];if(cc){const why=couponWhy(cc,sub);if(why)throw[400,why];disc=couponDisc(cc,sub);if(disc>0){coupon={code:cc.code,disc};cc.uses=(cc.uses||0)+1}}
+  const o={id:'UP'+Date.now().toString().slice(-7),buyer:u?.id||null,name:(b.name||u?.name||'').trim(),email:String(b.email||u?.email||'').trim().slice(0,80),items,ship,sub,disc,coupon,total:Math.max(0,sub-disc)+(ship||0),pay:'livraison',address:b.address,phone:b.phone,zone:'partout',
    status:'à payer à la livraison',date:Date.now()};
   db.orders.push(o);save();try{ERP.notifyOrder({no:o.id,source:'site',name:o.name,phone:o.phone,address:o.address,zone:o.zone==='partout'?'':o.zone,items:o.items.map(i=>({name:i.name,variant:[i.size?'Taille '+i.size:'',i.color||''].filter(Boolean).join(' / '),qty:i.qty,price:i.price}))})}catch(e){console.error('notif',e)}return o},
  'GET /api/order':(q)=>{const o=db.orders.find(o=>o.id===q.id&&o.phone.replace(/\D/g,'')===String(q.phone||'').replace(/\D/g,''));if(!o)throw[404,'Commande introuvable'];return o},
@@ -79,10 +83,11 @@ const routes={
    desc,sold:0,created:Date.now(),draft:true,src:{site:'manuel',id:tag,cny:cny||null,cur:'¥',goods:cny?Math.round(cny*cfg.rate):null,freight:cfg.freightUnit,suggested:price},tiers:[{min:1,price}]};
   db.products.unshift(p);save();return p},
  'POST /api/products/publish':(q,b,u)=>{need(u,'admin');const p=db.products.find(p=>p.id===b.id);if(!p)throw[404,'Produit introuvable'];const base=+b.price;if(!base)throw[400,'Prix FCFA requis'];
-  p.tiers=[{min:1,price:base},{min:10,price:Math.round(base*.9)},{min:50,price:Math.round(base*.8)}];if(b.name)p.name=String(b.name);if(b.cat)p.cat=b.cat;if(b.sizes)p.sizes=String(b.sizes).split(',').map(x=>x.trim()).filter(Boolean);delete p.draft;p.created=Date.now();save();return p},
+  p.tiers=[{min:1,price:base},{min:10,price:Math.round(base*.9)},{min:50,price:Math.round(base*.8)}];if(b.name)p.name=String(b.name);if(b.was!=null){const w=Math.round(+b.was||0);p.was=w>base?w:0}if(b.cat)p.cat=b.cat;if(b.sizes)p.sizes=String(b.sizes).split(',').map(x=>x.trim()).filter(Boolean);delete p.draft;p.created=Date.now();save();return p},
  // Modifier le prix (et le nom) d'un produit déjà publié — paliers 10/50 recalculés (−10 %/−20 %)
  'POST /api/products/price':(q,b,u)=>{need(u,'admin');const p=db.products.find(p=>p.id===b.id);if(!p)throw[404,'Produit introuvable'];const base=Math.round(+b.price);if(!(base>0))throw[400,'Prix FCFA requis'];
-  p.tiers=[{min:1,price:base},{min:10,price:Math.round(base*.9)},{min:50,price:Math.round(base*.8)}];if(b.name)p.name=String(b.name);save();return p},
+  p.tiers=[{min:1,price:base},{min:10,price:Math.round(base*.9)},{min:50,price:Math.round(base*.8)}];if(b.name)p.name=String(b.name);
+  if(b.was!=null){const w=Math.round(+b.was||0);p.was=w>base?w:0}save();return p},
  // Marquage manuel « Sold out » (produit et/ou variantes) — prioritaire sur le stock ERP
  'POST /api/product/soldout':(q,b,u)=>{need(u,'admin');const p=db.products.find(p=>p.id===b.id);if(!p)throw[404,'Produit introuvable'];
   if(b.sold!=null)p.sold=!!b.sold;
@@ -109,6 +114,16 @@ const routes={
  'POST /api/reviews/status':(q,b,u)=>{need(u,'admin');const r=db.reviews.find(x=>x.id===b.id);if(!r)throw[404,'Avis introuvable'];
   if(!['publié','en attente','rejeté'].includes(b.status))throw[400,'Statut invalide'];r.status=b.status;save();return r},
  'POST /api/reviews/delete':(q,b,u)=>{need(u,'admin');db.reviews=db.reviews.filter(x=>x.id!==b.id);save();return{ok:true}},
+ // Codes promo / coupons
+ 'GET /api/coupons':(q,b,u)=>{need(u,'admin');return db.coupons||[]},
+ 'POST /api/coupons':(q,b,u)=>{need(u,'admin');const code=String(b.code||'').trim().toUpperCase().replace(/\s+/g,'');if(!code)throw[400,'Code requis'];
+  const type=b.type==='amount'?'amount':'percent',value=Math.max(0,+b.value||0);if(type==='percent'&&value>90)throw[400,'Réduction maximum 90 %'];
+  db.coupons=db.coupons||[];const i=b.id?db.coupons.findIndex(x=>x.id===b.id):db.coupons.findIndex(x=>x.code===code);
+  const rec={id:i>=0?db.coupons[i].id:id(),code,type,value,min:Math.max(0,Math.round(+b.min||0)),maxUses:Math.max(0,Math.round(+b.maxUses||0)),expires:String(b.expires||'').slice(0,10),active:b.active!==false,uses:i>=0?(db.coupons[i].uses||0):0};
+  if(i>=0)db.coupons[i]={...db.coupons[i],...rec};else db.coupons.unshift(rec);save();return rec},
+ 'POST /api/coupons/delete':(q,b,u)=>{need(u,'admin');db.coupons=(db.coupons||[]).filter(x=>x.id!==b.id);save();return{ok:true}},
+ 'POST /api/coupon/check':(q,b,u)=>{const c=couponFind(b.code),sub=Math.max(0,Math.round(+b.sub||0));const why=couponWhy(c,sub);if(why)throw[400,why];
+  const disc=couponDisc(c,sub);if(disc<=0)throw[400,'Code promo sans effet sur ce panier'];return{ok:true,code:c.code,type:c.type,value:c.value,disc,total:Math.max(0,sub-disc)}},
  'POST /api/products':(q,b,u)=>{need(u,'admin');const base=+b.price,moq=Math.max(1,+b.moq||1);
   const p={id:id(),name:b.name,cat:b.cat,seller:u.id,unit:b.unit||'unité',moq,img:b.img||'🥿',imgs:b.imgUrl?[b.imgUrl]:undefined,sizes:(b.sizes||'36,37,38,39,40,41').split(',').map(x=>x.trim()).filter(Boolean),desc:b.desc||'',sold:0,created:Date.now(),
    tiers:b.tiers?.length?b.tiers:[{min:moq,price:base},{min:moq*10,price:Math.round(base*.92)},{min:moq*50,price:Math.round(base*.85)}]};
