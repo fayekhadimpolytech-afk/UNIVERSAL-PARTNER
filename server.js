@@ -61,7 +61,10 @@ const routes={
  'GET /api/order':(q)=>{const o=db.orders.find(o=>o.id===q.id&&o.phone.replace(/\D/g,'')===String(q.phone||'').replace(/\D/g,''));if(!o)throw[404,'Commande introuvable'];return o},
  'POST /api/password':(q,b,u)=>{need(u);if(u.pass!==hash(b.old||''))throw[400,'Mot de passe actuel incorrect'];if(String(b.pass||'').length<10)throw[400,'10 caractères minimum'];u.pass=hash(b.pass);for(const t in db.sessions)if(db.sessions[t]===u.id)delete db.sessions[t];save();return login(u)},
  'GET /api/tmapi':(q,b,u)=>{need(u,'admin');const k=db.secrets?.tmapi||'';return{set:!!k,hint:k?'••••'+k.slice(-4):''}},
- 'POST /api/tmapi':(q,b,u)=>{need(u,'admin');db.secrets={...db.secrets,tmapi:String(b.key||'').trim()};save();return{set:!!db.secrets.tmapi}},
+ 'POST /api/tmapi':(q,b,u)=>{need(u,'admin');const k=String(b.key||'').trim();
+  if(!k)throw[400,'Clé TMAPI vide'];
+  if(/\.\.\.|…|\s/.test(k))throw[400,'Clé incomplète : on dirait un extrait masqué (…). Dans console.tmapi.io → API Keys, clique sur Copier pour récupérer la clé entière, puis colle-la ici.'];
+  db.secrets={...db.secrets,tmapi:k};save();return{set:!!db.secrets.tmapi}},
  'POST /api/import-1688':async(q,b,u)=>{need(u,'admin');const p=await import1688(b.url,b.cat,u);db.products.unshift(p);save();return p},
  'GET /api/import/config':(q,b,u)=>{need(u,'admin');return{...impCfg(),cur:'¥',formula:'prix = (CNY × taux + fret estimé/unité) ÷ (1 − marge)'}},
  'POST /api/import/manual':async(q,b,u)=>{need(u,'admin');const name=String(b.name||'').trim();if(!name)throw[400,'Nom du produit requis'];
@@ -123,7 +126,12 @@ routes['POST /api/erp/backup']=async(q,b,u)=>{need(u,'admin');await backup();ret
 const IMG=UPL;
 async function tm(pathq,body){const k=db.secrets?.tmapi;if(!k)throw[400,'Clé TMAPI non enregistrée dans Gestion UP'];
  const r=await fetch('http://api.tmapi.top'+pathq,{method:body?'POST':'GET',body:body?JSON.stringify(body):undefined,headers:{apikey:k,'Content-Type':'application/json'},signal:AbortSignal.timeout(40000)});
- const j=await r.json().catch(()=>({}));if(j.code===4393)throw[402,'TMAPI : crédits insuffisants (forfait pas encore actif ?)'];if(j.code!==200||!j.data)throw[502,'TMAPI : '+(j.msg||j.message||('erreur '+r.status))];return j.data}
+ const j=await r.json().catch(()=>({}));if(j.code===200&&j.data)return j.data;
+ const code=j.code||r.status,msg=String(j.message||j.msg||('erreur '+r.status));
+ if(code===4011)throw[502,'TMAPI : aucune clé API dans la requête (code 4011) — enregistre ta clé dans Gestion UP'];
+ if(code===4013)throw[502,'TMAPI : clé API refusée (code 4013) — recopie la clé COMPLÈTE depuis console.tmapi.io → API Keys (bouton Copier), puis Enregistrer dans Gestion UP'];
+ if(code===4393)throw[402,'TMAPI : crédits insuffisants (forfait pas encore actif ?)'];
+ throw[502,'TMAPI : '+msg+' (code '+code+')']}
 async function tr(t){t=String(t||'').trim();if(!t||!/[\u4e00-\u9fff]/.test(t))return t;try{const r=await fetch('https://api.mymemory.translated.net/get?langpair=zh-CN|fr&q='+encodeURIComponent(t.slice(0,450)),{signal:AbortSignal.timeout(15000)});const j=await r.json();return j.responseData?.translatedText||t}catch{return t}}
 async function dl(u,name){try{if(u.startsWith('//'))u='https:'+u;const r=await fetch(u,{signal:AbortSignal.timeout(30000)});if(!r.ok)return null;fs.writeFileSync(path.join(IMG,name),Buffer.from(await r.arrayBuffer()));return '/img/'+name}catch{return null}}
 const SITES={'1688':'1688',taobao:'Taobao/Tmall',alibaba:'Alibaba',yiwugo:'Yiwugo',aliexpress:'AliExpress',tiktok:'TikTok Shop'};
