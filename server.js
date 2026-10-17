@@ -159,6 +159,57 @@ async function import1688(url,cat,u){const F=await fetchItem(url);const d=F.d,ii
  return {id:id(),name,cat:db.cats.some(c=>c.id===cat)?cat:db.cats[0].id,seller:u.id,unit:'pièce',moq:1,img:'🥿',imgs:imgs.length?imgs:undefined,sizes,colors,
   desc:name+(colors.length?'. Coloris : '+colors.join(', ')+'.':''),sold:0,created:Date.now(),draft:true,
   src:{site:F.site,id:iid,cny,cur:F.cur,goods:cny?Math.round(cny*cfg.rate):null,freight:cfg.freightUnit,suggested:sp},tiers:[{min:1,price:sp}]}}
+// ---- Préparation de fiche produit par IA (fournisseur pluggable) ----
+const AI_PROVIDERS={
+ gemini:{label:'Google Gemini',base:'https://generativelanguage.googleapis.com/v1beta',models:['gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.0-flash'],defaultModel:'gemini-2.5-flash'},
+ openai:{label:'OpenAI-compatible (OpenAI, OpenRouter, Groq…)',base:'https://api.openai.com/v1',models:['gpt-4o-mini','gpt-4.1-mini'],defaultModel:'gpt-4o-mini'}};
+const aiCfg=()=>{const a=(db.secrets&&db.secrets.ai)||{};const id=AI_PROVIDERS[a.provider]?a.provider:'gemini';const P=AI_PROVIDERS[id];return{provider:id,key:String(a.key||''),base:String(a.base||P.base||'').replace(/\/+$/,''),model:String(a.model||P.defaultModel||'')}};
+function aiExtractJson(t){t=String(t||'').trim().replace(/^```(?:json)?/i,'').replace(/```$/,'').trim();const i=t.indexOf('{'),j=t.lastIndexOf('}');if(i<0||j<=i)throw[502,'IA : réponse illisible (pas de JSON)'];try{return JSON.parse(t.slice(i,j+1))}catch(e){throw[502,'IA : JSON invalide dans la réponse']}}
+async function aiCall(prompt,imgs){const c=aiCfg();if(!c.key)throw[400,'Clé IA non enregistrée — ajoute-la dans Gestion UP → 🤖 Fiche produit par IA'];
+ const filt=(imgs||[]).filter(x=>x&&x.data).slice(0,4);
+ if(c.provider==='gemini'){
+  const parts=[{text:prompt}];for(const im of filt)parts.push({inline_data:{mime_type:im.mime,data:im.data}});
+  const r=await fetch(c.base+'/models/'+c.model+':generateContent?key='+encodeURIComponent(c.key),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{role:'user',parts}],generationConfig:{temperature:0.7,responseMimeType:'application/json'}}),signal:AbortSignal.timeout(90000)});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok||j.error)throw[502,'IA (Gemini) : '+((j.error&&j.error.message)||('erreur '+r.status))];
+  const c0=(j.candidates&&j.candidates[0])||{};return ((c0.content&&c0.content.parts)||[]).map(p=>p.text).filter(Boolean).join('')}
+ const content=[{type:'text',text:prompt}];for(const im of filt)content.push({type:'image_url',image_url:{url:'data:'+im.mime+';base64,'+im.data}});
+ const r=await fetch(c.base+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+c.key},body:JSON.stringify({model:c.model,messages:[{role:'user',content}],temperature:0.7}),signal:AbortSignal.timeout(90000)});
+ const j=await r.json().catch(()=>({}));
+ if(!r.ok||j.error)throw[502,'IA : '+((j.error&&j.error.message)||('erreur '+r.status))];
+ return ((j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||'')}
+function saveDataUrl(durl,name){const m=/^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/i.exec(String(durl||''));if(!m)return null;
+ const mime=m[1].toLowerCase(),data=m[2].replace(/\s/g,''),ext=mime.includes('png')?'png':mime.includes('webp')?'webp':mime.includes('gif')?'gif':'jpg';const file=name+'.'+ext;fs.writeFileSync(path.join(IMG,file),Buffer.from(data,'base64'));return{url:'/img/'+file,mime,data}}
+routes['GET /api/ai']=(q,b,u)=>{need(u,'admin');const c=aiCfg();return{provider:c.provider,model:c.model,base:c.base,set:!!c.key,hint:c.key?'••••'+c.key.slice(-4):'',providers:Object.entries(AI_PROVIDERS).map(([id,v])=>({id,label:v.label,models:v.models,defaultModel:v.defaultModel,base:v.base}))}};
+routes['POST /api/ai']=(q,b,u)=>{need(u,'admin');const provider=AI_PROVIDERS[b.provider]?b.provider:'gemini';const cur=(db.secrets&&db.secrets.ai)||{};const key=String(b.key||'').trim();
+ if(key&&/\.\.\.|…|\s/.test(key))throw[400,'Clé IA incomplète : copie-la entière (bouton Copier du fournisseur), sans « … ».'];
+ db.secrets={...db.secrets,ai:{provider,key:key||String(cur.key||''),model:String(b.model||'').trim()||cur.model||'',base:String(b.base||'').trim()}};save();return{set:!!db.secrets.ai.key}};
+routes['POST /api/ai/fiche']=async(q,b,u)=>{need(u,'admin');const c=aiCfg();if(!c.key)throw[400,'Clé IA non enregistrée — ajoute-la dans Gestion UP (section 🤖 Fiche produit par IA)'];
+ const ids=db.cats.map(x=>x.id),catSel=ids.includes(b.cat)?b.cat:null,tag='ai'+Date.now().toString(36);
+ const photos=(Array.isArray(b.photos)?b.photos:[]).slice(0,6).map((d,i)=>saveDataUrl(d,tag+'_'+i)).filter(Boolean);
+ let raw={title:'',cny:null,cur:'¥',site:'',id:'',imgUrls:[]},linkErr=null;
+ if(String(b.url||'').trim()){try{const F=await fetchItem(b.url);const d=F.d||{};raw={title:d.title||d.subject||'',cny:+(d.price_info?.price||d.price||(d.price_range||[])[0]?.[1]||0)||null,cur:F.cur,site:F.site,id:String(F.id||''),imgUrls:[...(d.main_imgs||d.images||[])].slice(0,4)}}catch(e){linkErr=Array.isArray(e)?e[1]:String(e)}}
+ if(!raw.title&&!photos.length&&!String(b.name||'').trim())throw[400,linkErr?('Lien illisible ('+linkErr+') — ajoute des photos ou le nom du produit.'):'Donne un lien, des photos ou le nom du produit'];
+ const cny=raw.cny||(+b.cny||0)||null,catList=db.cats.map(x=>x.id+'='+x.name).join(', ');
+ const prompt='Tu es l\'assistant e-commerce de Universal Partner, boutique sénégalaise (livraison gratuite partout, paiement à la livraison). À partir des éléments fournis, rédige une FICHE PRODUIT en français, prête à publier.\n'
+  +'Réponds UNIQUEMENT par un objet JSON valide, sans texte ni balises autour, avec exactement ces clés :\n'
+  +'{"titre":"nom produit pro et vendeur, sans marque chinoise, 70 caractères max","accroche":"une phrase d\'accroche, 90 caractères max","description":"3 à 5 phrases : problème → solution → bénéfices, ton chaleureux, français simple","caracteristiques":["point clé","..."],"categorie":"un id parmi '+catList+'","motsCles":["mot","..."],"coloris":["..."],"tailles":["..."],"prixConseille":0,"pubFacebook":"post Facebook prêt : 3-4 lignes, emojis, appel à l\'action + livraison gratuite / paiement à la livraison","pubWhatsapp":"message WhatsApp court, prêt à envoyer"}\n'
+  +'Règles : prixConseille en FCFA entier (0 si non estimable) ; n\'invente pas de caractéristiques techniques non déductibles ; adapte-toi au marché sénégalais ; coloris/tailles = uniquement ceux visibles ou fournis (tableaux vides sinon).\n'
+  +'Éléments : nom fourni="'+String(b.name||'')+'" ; infos fournies="'+String(b.infos||'')+'" ; titre d\'origine="'+raw.title+'" ; prix fournisseur='+(cny?cny+' CNY':'inconnu')+' ; site='+(raw.site||'n/a')+'.';
+ const out=await aiCall(prompt,photos.map(p=>({mime:p.mime,data:p.data})));
+ const a=aiExtractJson(out);
+ const name=String(a.titre||raw.title||b.name||'Nouveau produit').slice(0,90),cat=catSel||(ids.includes(a.categorie)?a.categorie:db.cats[0].id),imp=impCfg();
+ const price=cny?suggestedPrice(cny):Math.max(0,Math.round(+a.prixConseille||0));
+ const car=(Array.isArray(a.caracteristiques)?a.caracteristiques:[]).map(String).filter(Boolean);
+ const imgUrls=photos.length?photos.map(p=>p.url):raw.imgUrls;
+ const desc=[String(a.description||'').trim(),car.length?'Caractéristiques : '+car.join(' · '):''].filter(Boolean).join(' · ').slice(0,900);
+ const p={id:id(),name,cat,seller:u.id,unit:'pièce',moq:1,img:imgUrls.length?'🖼️':'📦',imgs:imgUrls.length?imgUrls:undefined,
+  sizes:(Array.isArray(a.tailles)?a.tailles:[]).map(String).filter(Boolean),colors:(Array.isArray(a.coloris)?a.coloris:[]).map(String).filter(Boolean),
+  desc,sold:0,created:Date.now(),draft:true,accroche:String(a.accroche||'').trim(),keywords:(Array.isArray(a.motsCles)?a.motsCles:[]).map(String).filter(Boolean),
+  pubFb:String(a.pubFacebook||'').trim(),pubWa:String(a.pubWhatsapp||'').trim(),ai:{provider:c.provider,model:c.model,generated:Date.now()},
+  src:{site:'ia'+(raw.site?'/'+raw.site:''),id:raw.id||tag,cny,cur:raw.cur||'¥',goods:cny?Math.round(cny*imp.rate):null,freight:imp.freightUnit,suggested:price},
+  tiers:[{min:1,price}]};
+ db.products.unshift(p);save();return p};
 function login(u){const t=id()+id();db.sessions[t]=u.id;save();return{token:t,user:pub(u)}}
 function need(u,role){if(!u)throw[401,'Connexion requise'];if(role&&u.role!==role)throw[403,'Réservé à UP']}
 const mime={'.webp':'image/webp','.png':'image/png','.jpg':'image/jpeg','.mp4':'video/mp4','.webm':'video/webm','.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css'};
