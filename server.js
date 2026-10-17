@@ -49,6 +49,26 @@ function couponDisc(c,sub){if(!c||!c.active)return 0;if(c.expires&&Date.now()>Da
 function couponWhy(c,sub){if(!c)return'Code promo inconnu';if(!c.active)return'Code promo désactivé';if(c.expires&&Date.now()>Date.parse(c.expires+'T23:59:59'))return'Code promo expiré';if(c.maxUses&&(c.uses||0)>=c.maxUses)return'Code promo déjà utilisé au maximum';if(c.min&&sub<c.min)return'Code promo valable dès '+c.min+' FCFA';return null}
 // ---- Email transactionnel (fournisseur pluggable : Brevo ou Resend) ----
 const dayKey=t=>new Date(t||Date.now()).toISOString().slice(0,10);
+const pixels=()=>{const s=db.settings||{};const a=(Array.isArray(s.pixels)&&s.pixels.length?s.pixels:(s.pixel?[s.pixel]:[])).map(v=>String(v||'').replace(/\D/g,'')).filter(Boolean);return [...new Set(a)]};
+const sha256=s=>crypto.createHash('sha256').update(String(s)).digest('hex');
+const capiCfg=()=>{const c=(db.secrets&&db.secrets.capi)||{};return{token:String(c.token||''),testCode:String(c.testCode||'')}};
+const normPhone=p=>{const d=String(p||'').replace(/\D/g,'');return d?(d.startsWith('221')?d:'221'+d):''};
+async function fbCapi(eventName,eventId,user,req,custom,url){try{
+ const cfg=capiCfg(),px=pixels();if(!cfg.token||!px.length)return false;
+ const hd=(req&&req.headers)||{},ip=String(hd['x-forwarded-for']||'').split(',')[0].trim()||(req&&req.socket&&req.socket.remoteAddress)||'',ua=String(hd['user-agent']||''),cookie=String(hd.cookie||'');
+ const ck=n=>{const m=new RegExp('(?:^|; )'+n+'=([^;]+)').exec(cookie);return m?decodeURIComponent(m[1]):undefined};
+ const ud={};if(user&&user.email)ud.em=[sha256(String(user.email).trim().toLowerCase())];
+ const ph=normPhone(user&&user.phone);if(ph)ud.ph=[sha256(ph)];
+ if(ip)ud.client_ip_address=ip;if(ua)ud.client_user_agent=ua;
+ const fbp=ck('_fbp'),fbc=ck('_fbc');if(fbp)ud.fbp=fbp;if(fbc)ud.fbc=fbc;
+ const payload={data:[{event_name:eventName,event_time:Math.floor(Date.now()/1000),event_id:String(eventId),action_source:'website',event_source_url:url||'https://universal-partner.com',user_data:ud,custom_data:{currency:'XOF',...(custom||{})}}]};
+ if(cfg.testCode)payload.test_event_code=cfg.testCode;
+ const out={sent:0,errors:[]};
+ for(const id of px){try{const r=await fetch('https://graph.facebook.com/v21.0/'+id+'/events?access_token='+encodeURIComponent(cfg.token),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(20000)});
+  if(r.ok)out.sent++;else{const t=await r.text().catch(()=>'');out.errors.push(id+' → HTTP '+r.status+' '+String(t).slice(0,140))}}
+  catch(e){out.errors.push(id+' → '+(e&&e.message))}}
+ if(out.errors.length)console.error('capi',out.errors.join(' | '));
+ return out}catch(e){console.error('capi',e&&e.message);return{sent:0,errors:[String(e&&e.message)]}}}
 const mailCfg=()=>{const m=(db.secrets&&db.secrets.mail)||{};return{provider:m.provider==='resend'?'resend':'brevo',key:String(m.key||''),from:String(m.from||'Universal Partner <contact@universal-partner.com>')}};async function mail(to,subject,html,text){const c=mailCfg();if(!c.key)throw[400,'Envoi email non configuré (ajoute la clé dans Gestion UP → ✉️ Email)'];if(!to)throw[400,'Destinataire manquant'];
  if(c.provider==='resend'){const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+c.key},body:JSON.stringify({from:c.from,to:[to],subject,html,text:text||''}),signal:AbortSignal.timeout(30000)});
   if(!r.ok){const t=await r.text().catch(()=>'');throw[502,'Email (Resend) : '+t.slice(0,200)]}return true}
@@ -72,7 +92,7 @@ const ratingFor=pid=>{const rs=db.reviews.filter(r=>r.product===pid&&REVOK(r)),c
 const withSeller=p=>{const r=ratingFor(p.id);return{...p,sellerInfo:pub(db.users.find(u=>u.id===p.seller)),rating:r,reviews:db.reviews.filter(x=>x.product===p.id&&REVOK(x)).map(x=>({id:x.id,user:x.user,stars:x.stars,text:x.text,date:x.date}))}};
 const routes={
  'GET /api/meta':()=>{const live=db.products.filter(p=>!p.draft),par=id=>db.cats.find(c=>c.id===id)?.parent,n=c=>live.filter(p=>p.cat===c.id||par(p.cat)===c.id).length;
-  return{settings:{whatsapp:db.settings?.whatsapp||'',pixel:db.settings?.pixel||'',payEnabled:!!db.settings?.payEnabled},zones:db.zones,cats:db.cats.map(c=>({...c,count:n(c)})),pages:Object.values(db.pages||{}).filter(p=>p.published).map(p=>({id:p.id,title:p.title})),sellers:db.users.filter(u=>u.role==='admin').map(pub)}},
+  return{settings:{whatsapp:db.settings?.whatsapp||'',pixel:pixels()[0]||'',pixels:pixels(),payEnabled:!!db.settings?.payEnabled},zones:db.zones,cats:db.cats.map(c=>({...c,count:n(c)})),pages:Object.values(db.pages||{}).filter(p=>p.published).map(p=>({id:p.id,title:p.title})),sellers:db.users.filter(u=>u.role==='admin').map(pub)}},
  'GET /api/products':(q,b,u)=>{let r=u?.role==='admin'&&q.all?db.products:db.products.filter(p=>!p.draft);
   if(q.q){const s=q.q.toLowerCase();r=r.filter(p=>(p.name+p.desc).toLowerCase().includes(s))}
   if(q.cat)r=r.filter(p=>p.cat===q.cat);if(q.seller)r=r.filter(p=>p.seller===q.seller);
@@ -85,7 +105,7 @@ const routes={
   const u={id:id(),name:b.name,email:b.email,pass:hash(b.pass),role:'buyer',country:b.country||'Sénégal',verified:false,years:0};db.users.push(u);return login(u)},
  'POST /api/login':(q,b)=>{const u=db.users.find(u=>u.email===b.email&&u.pass===hash(b.pass));if(!u)throw[401,'Identifiants invalides'];return login(u)},
  'GET /api/me':(q,b,u)=>pub(u),
- 'POST /api/orders':(q,b,u)=>{if(!b.items?.length)throw[400,'Panier vide'];if(!u&&(!b.name?.trim()||!b.phone?.trim()||!b.address?.trim()))throw[400,'Nom, téléphone et adresse requis'];if(!b.phone?.trim()||!b.address?.trim())throw[400,'Téléphone et adresse requis'];
+ 'POST /api/orders':(q,b,u,req)=>{if(!b.items?.length)throw[400,'Panier vide'];if(!u&&(!b.name?.trim()||!b.phone?.trim()||!b.address?.trim()))throw[400,'Nom, téléphone et adresse requis'];if(!b.phone?.trim()||!b.address?.trim())throw[400,'Téléphone et adresse requis'];
   const items=b.items.map(i=>{const p=db.products.find(p=>p.id===i.id);if(!p||p.draft)throw[400,'Produit invalide'];if(p.out||p.sold)throw[400,'Sold out (rupture de stock) : '+p.name];if(p.sizes?.length&&!p.sizes.includes(i.size))throw[400,'Choisissez la taille : '+p.name];if(p.colors?.length&&!p.colors.includes(i.color))throw[400,'Choisissez la couleur : '+p.name];if((p.outSizes||[]).includes('Taille '+i.size)||(p.soldSizes||[]).includes(i.size))throw[400,'Taille '+i.size+' épuisée : '+p.name];if((p.soldColors||[]).includes(i.color))throw[400,'Couleur '+i.color+' épuisée : '+p.name];const qty=Math.max(+i.qty,p.moq);return{id:p.id,size:i.size||'',color:i.color||'',img:p.imgs?.[0]||p.img,name:p.name,seller:p.seller,qty,price:priceFor(p,qty)}});
   const ship=0,sub=items.reduce((s,i)=>s+i.qty*i.price,0);
   let disc=0,coupon=null;const cc=couponFind(b.coupon);if(String(b.coupon||'').trim()&&!cc)throw[400,'Code promo inconnu'];if(cc){const why=couponWhy(cc,sub);if(why)throw[400,why];disc=couponDisc(cc,sub);if(disc>0){coupon={code:cc.code,disc};cc.uses=(cc.uses||0)+1}}
@@ -93,6 +113,7 @@ const routes={
    status:'à payer à la livraison',date:Date.now()};
   db.orders.push(o);(db.carts||[]).forEach(c=>{if(!c.done&&((o.phone&&c.phone===String(o.phone).replace(/\D/g,''))||(o.email&&c.email===String(o.email).toLowerCase())))c.done=true});save();
  if(o.email)mail(o.email,'Commande '+o.id+' reçue — Universal Partner',orderMailHtml(o)).catch(e=>console.error('mail',e&&e.message));
+ fbCapi('Purchase',o.id,{email:o.email,phone:o.phone},req,{value:o.total,content_ids:o.items.map(i=>i.id),content_type:'product',num_items:o.items.reduce((a,i)=>a+i.qty,0)},'https://universal-partner.com/#/suivi?id='+o.id).catch(e=>console.error('capi',e&&e.message));
  try{ERP.notifyOrder({no:o.id,source:'site',name:o.name,phone:o.phone,address:o.address,zone:o.zone==='partout'?'':o.zone,items:o.items.map(i=>({name:i.name,variant:[i.size?'Taille '+i.size:'',i.color||''].filter(Boolean).join(' / '),qty:i.qty,price:i.price}))})}catch(e){console.error('notif',e)}return o},
  'GET /api/order':(q)=>{const o=db.orders.find(o=>o.id===q.id&&o.phone.replace(/\D/g,'')===String(q.phone||'').replace(/\D/g,''));if(!o)throw[404,'Commande introuvable'];return o},
  'POST /api/password':(q,b,u)=>{need(u);if(u.pass!==hash(b.old||''))throw[400,'Mot de passe actuel incorrect'];if(String(b.pass||'').length<10)throw[400,'10 caractères minimum'];u.pass=hash(b.pass);for(const t in db.sessions)if(db.sessions[t]===u.id)delete db.sessions[t];save();return login(u)},
@@ -222,8 +243,19 @@ const routes={
 const fmtDate=t=>new Intl.DateTimeFormat('fr-FR',{timeZone:'Africa/Dakar',day:'2-digit',month:'2-digit',year:'numeric'}).format(t);
 const ERP=require('./erp.js')(routes,{img:UPL,db:()=>db,save:()=>save(),pub,fmtDate});
 const STAFF=['gerant','stock','commercial','comptable','livreur','logistique'];
-routes['GET /api/erp/pixel']=(q,b,u)=>{need(u,'admin');return{pixel:db.settings?.pixel||''}};
-routes['POST /api/erp/pixel']=(q,b,u)=>{need(u,'admin');const p=String(b.pixel||'').replace(/\D/g,'');if(p&&(p.length<10||p.length>20))throw[400,'Identifiant de pixel invalide (15 à 16 chiffres en général)'];db.settings={...db.settings,pixel:p};save();return{pixel:p}};
+routes['GET /api/erp/pixel']=(q,b,u)=>{need(u,'admin');const px=pixels();return{pixel:px[0]||'',pixel2:px[1]||'',pixels:px}};
+routes['POST /api/erp/pixel']=(q,b,u)=>{need(u,'admin');
+ const arr=[b.pixel,b.pixel2].map(v=>String(v||'').replace(/\D/g,'')).filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i);
+ arr.forEach(p=>{if(p.length<10||p.length>20)throw[400,'Identifiant de pixel invalide : '+p]});
+ db.settings={...db.settings,pixels:arr,pixel:arr[0]||''};save();return{pixels:arr,pixel:arr[0]||'',pixel2:arr[1]||''}};
+routes['GET /api/capi']=(q,b,u)=>{need(u,'admin');const c=capiCfg();return{set:!!c.token,hint:c.token?'••••'+c.token.slice(-4):'',testCode:c.testCode,pixels:pixels()}};
+routes['POST /api/capi']=(q,b,u)=>{need(u,'admin');const token=String(b.token||'').trim();if(token&&/\s/.test(token))throw[400,'Jeton invalide (il contient des espaces — copie-le en entier, sans retour à la ligne)'];
+ const cur=(db.secrets&&db.secrets.capi)||{};db.secrets={...db.secrets,capi:{token:token||cur.token||'',testCode:String(b.testCode||'').trim().slice(0,40)}};save();return{set:!!db.secrets.capi.token,pixels:pixels()}};
+routes['POST /api/capi/test']=async(q,b,u,req)=>{need(u,'admin');const c=capiCfg();if(!c.token)throw[400,'Jeton API Conversions non configuré'];
+ if(!c.testCode)throw[400,'Renseigne d\'abord le code de test (Gestionnaire d\'événements → Tester les événements) : sinon l\'événement de test fausserait tes statistiques'];
+ const out=await fbCapi('Lead','up-test-'+Date.now(),{email:'test@universal-partner.com',phone:'770000000'},req,{value:1,content_name:'Test API Conversions'},'https://universal-partner.com/');
+ if(!out.sent)throw[502,'Envoi refusé : '+(out.errors.join(' | ')||'aucun pixel configuré')];
+ return{ok:true,sent:out.sent,pixels:pixels()}};
 routes['GET /api/erp/users']=(q,b,u)=>{need(u,'admin');return db.users.filter(x=>x.role==='admin'||STAFF.includes(x.role)).map(pub)};
 routes['POST /api/erp/users']=(q,b,u)=>{need(u,'admin');if(!STAFF.includes(b.role))throw[400,'Rôle invalide'];if(!b.email||!b.name||String(b.pass||'').length<8)throw[400,'Nom, email et mot de passe (8 car. min) requis'];if(b.role==='livreur'&&!db.erp?.couriers?.some(c=>c.id===b.courier))throw[400,'Choisis la fiche livreur à relier au compte'];
  let x=db.users.find(v=>v.email===b.email);if(x&&x.role==='admin')throw[400,'Compte admin non modifiable'];if(!x){x={id:id(),country:'Sénégal'};db.users.push(x)}Object.assign(x,{name:b.name,email:b.email,role:b.role,pass:hash(b.pass),courier:b.role==='livreur'?String(b.courier||''):undefined});save();return pub(x)};
@@ -333,7 +365,7 @@ const srv=http.createServer((req,res)=>{const url=new URL(req.url,'http://x'),q=
   const send=(c,d)=>{if(d&&d.__raw){res.writeHead(c,{'Content-Type':d.__raw.type,'Content-Disposition':'inline; filename="'+d.__raw.name+'"'});return res.end(d.__raw.body)}res.writeHead(c,{'Content-Type':'application/json'});res.end(JSON.stringify(d))};
   try{let M=req.method;if(q._m){M=q._m;if(q._b&&!body)body=q._b;}const h=routes[M+' '+url.pathname];if(!h)throw[404,'Route inconnue'];
    const tok=(req.headers.authorization||'').replace('Bearer ','')||q._t||'';let u=db.users.find(x=>x.id===db.sessions[tok]);if(u&&u.role==='gerant'&&url.pathname!=='/api/password'){if(/delete|demo/.test(url.pathname)||M==='DELETE')throw[403,'Suppression réservée à l\'admin'];u={...u,role:'admin',gerant:true}}
-   Promise.resolve().then(()=>h(q,body?JSON.parse(body):{},u)).then(d=>send(200,d),e=>Array.isArray(e)?send(e[0],{error:e[1]}):(console.error(e),send(500,{error:'Erreur serveur'})))}catch(e){Array.isArray(e)?send(e[0],{error:e[1]}):(console.error(e),send(500,{error:'Erreur serveur'}))}});return}
+   Promise.resolve().then(()=>h(q,body?JSON.parse(body):{},u,req)).then(d=>send(200,d),e=>Array.isArray(e)?send(e[0],{error:e[1]}):(console.error(e),send(500,{error:'Erreur serveur'})))}catch(e){Array.isArray(e)?send(e[0],{error:e[1]}):(console.error(e),send(500,{error:'Erreur serveur'}))}});return}
  // --- URL produit réelles /p/<id> : balises Open Graph rendues côté serveur (aperçus Facebook/WhatsApp) ---
  if(url.pathname.startsWith('/p/')){
   const pid=url.pathname.slice(3).replace(/\/+$/,'');
