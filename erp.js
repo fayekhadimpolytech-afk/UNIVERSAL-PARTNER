@@ -26,9 +26,16 @@ module.exports=function(routes,X){
   if(qty>0&&cost!=null&&type!=='retour'){const c=Math.round(+cost);s.cmp=s.qty>0?Math.round((s.qty*s.cmp+qty*c)/(s.qty+qty)):c}
   const wasOk=s.qty>s.min;s.qty+=qty;if(qty<0&&wasOk&&s.qty<=s.min&&!X.quiet)setImmediate(()=>checkLow(s));if(s.qty>s.min)delete lowSent[s.id];E().moves.unshift({id:id(),date:Date.now(),type,sid:s.id,label:label(s),qty,cost:Math.round(cost??s.cmp),reason:reason||'',ref:ref||'',user:u?.name||'système'});
   sync(s.pid)}
- // Synchronisation site : stock total 0 sur un produit suivi → « épuisé »
+ // Taille canonique d'une variante de stock ("Taille 36-37", "Blanc 36-37", "40-41") -> "36-37" ; '' si ce n'est pas une taille
+ const szTok=v=>{let t=String(v||'').trim().replace(/^taille\s+/i,'').replace(/^[^\d]+/,'').trim();return /^\d{2}(-\d{2})?$/.test(t)?t:''};
+ // Synchronisation site (source de vérité = stock) : les tailles du produit = les tailles présentes en stock ;
+ // une taille sans quantité passe en « épuisée », total 0 → produit « épuisé ». Les variantes sont lues en "Taille <taille>".
  function sync(pid){const p=prod(pid);if(!p)return;const ss=E().stock.filter(s=>s.pid===pid);if(!ss.length)return;
-  const tot=ss.reduce((a,s)=>a+s.qty,0);p.out=tot<=0;p.stockQty=tot;p.outSizes=ss.filter(s=>s.qty<=0&&s.variant).map(s=>s.variant)}
+  const toks=[];for(const s of ss){const t=szTok(s.variant);if(t&&!toks.includes(t))toks.push(t)}
+  toks.sort((a,b)=>parseInt(a,10)-parseInt(b,10)||a.localeCompare(b));
+  if(toks.length)p.sizes=toks;
+  const tot=ss.reduce((a,s)=>a+s.qty,0);p.out=tot<=0;p.stockQty=tot;
+  p.outSizes=ss.filter(s=>s.qty<=0&&szTok(s.variant)).map(s=>'Taille '+szTok(s.variant))}
   const view=s=>({...s,label:label(s),product:prod(s.pid)?.name||'',img:pimg(s.pid,s.variant),value:s.qty*s.cmp,alert:s.qty<=s.min});
  const IMG=X.img||path.join(__dirname,'public','img');
  const savePhoto=(data)=>{const m=String(data||'').match(/^data:image\/(jpeg|jpg|png|webp);base64,(.+)$/);if(!m)return null;
