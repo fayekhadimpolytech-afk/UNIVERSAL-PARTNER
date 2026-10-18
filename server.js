@@ -393,7 +393,7 @@ const srv=http.createServer((req,res)=>{const url=new URL(req.url,'http://x'),q=
    let html=(e||!d)?('<!doctype html><meta http-equiv="refresh" content="0;url=/#/p/'+pid+'">'):d.toString();
    html=html.replace('</head>',og.join('\n')+'\n</head>');
    html=injectPixel(html);
-   if(p)html=html.replace('</body>','<script>location.replace("/#/p/'+pid+'")</script></body>');
+   if(p)html=html.replace('</body>','<script>location.replace("/#/p/'+pid+'"+location.search)</script></body>');
    res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);
   });
   return;
