@@ -53,7 +53,7 @@ const pixels=()=>{const s=db.settings||{};const a=(Array.isArray(s.pixels)&&s.pi
 // Code de base du pixel écrit DANS la page (indispensable pour que l'outil de configuration Meta le détecte)
 const pixelSnippet=()=>{const px=pixels();if(!px.length)return '';
  return '<script>!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version="2.0";n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,"script","https://connect.facebook.net/en_US/fbevents.js");'
-  +px.map(id=>'fbq("init","'+id+'");').join('')+'fbq("track","PageView");</script>'
+  +px.map(id=>'fbq("init","'+id+'");').join('')+'if(location.pathname.indexOf("/p/")!==0)fbq("track","PageView");</script>'
   +px.map(id=>'<noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id='+id+'&amp;ev=PageView&amp;noscript=1"/></noscript>').join('')};
 const injectPixel=h=>h.includes('<!--UP_PIXEL-->')?h.replace('<!--UP_PIXEL-->',pixelSnippet()):h;
 const sha256=s=>crypto.createHash('sha256').update(String(s)).digest('hex');
