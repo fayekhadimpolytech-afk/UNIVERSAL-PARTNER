@@ -132,7 +132,10 @@ const routes={
  'GET /api/import/config':(q,b,u)=>{need(u,'admin');return{...impCfg(),cur:'¥',formula:'prix = (CNY × taux + fret estimé/unité) ÷ (1 − marge)'}},
  'POST /api/import/manual':async(q,b,u)=>{need(u,'admin');const name=String(b.name||'').trim();if(!name)throw[400,'Nom du produit requis'];
   const cny=+b.cny||0;const urls=String(b.imgs||'').split(/[\s,]+/).map(x=>x.trim()).filter(Boolean).slice(0,8);
-  const tag='m'+Date.now().toString(36);const imgs=(await Promise.all(urls.map((s,i)=>dl(s,tag+i+'.jpg')))).filter(Boolean);
+  const tag='m'+Date.now().toString(36);
+  // Photos importées depuis le téléphone / l'ordinateur (data URL réduite côté client) : écrites d'abord, puis les liens.
+  const ups=(Array.isArray(b.photos)?b.photos:[]).slice(0,6).map((d,i)=>saveDataUrl(d,tag+'_p'+i)).filter(Boolean).map(x=>x.url);
+  const imgs=[...ups,...(await Promise.all(urls.map((s,i)=>dl(s,tag+'l'+i+'.jpg')))).filter(Boolean)].slice(0,8);
   const cfg=impCfg();const price=suggestedPrice(cny)||Math.max(0,Math.round(+b.price||0));
   const desc=[String(b.desc||'').trim(),b.specs?'Caractéristiques : '+String(b.specs).trim():''].filter(Boolean).join(' · ');
   const p={id:id(),name,cat:db.cats.some(c=>c.id===b.cat)?b.cat:db.cats[0].id,seller:u.id,unit:'pièce',moq:1,img:'📦',
@@ -240,9 +243,22 @@ const routes={
    today:today&&{orders:today.orders,rev:today.rev,v:today.v,pv:today.pv},top,views,cats:Object.entries(cats).map(([name,rev])=>({name,rev})).sort((a,b)=>b.rev-a.rev),
    live:{products:db.products.filter(p=>!p.draft).length,drafts:db.products.filter(p=>p.draft).length,reviews:db.reviews.length,pending:db.reviews.filter(r=>r.status==='en attente').length,news:(db.news||[]).length,carts:(db.carts||[]).filter(c=>!c.done).length,coupons:(db.coupons||[]).filter(c=>c.active).length,stockOut:db.products.filter(p=>!p.draft&&(p.out||p.sold)).length}}},
  'POST /api/products':(q,b,u)=>{need(u,'admin');const base=+b.price,moq=Math.max(1,+b.moq||1);
-  const p={id:id(),name:b.name,cat:b.cat,seller:u.id,unit:b.unit||'unité',moq,img:b.img||'🥿',imgs:b.imgUrl?[b.imgUrl]:undefined,sizes:(b.sizes||'36,37,38,39,40,41').split(',').map(x=>x.trim()).filter(Boolean),desc:b.desc||'',sold:0,created:Date.now(),
+  if(!String(b.name||'').trim()||!base)throw[400,'Nom et prix requis'];
+  // Photos importées depuis le téléphone / l'ordinateur (data URL réduite côté client) + lien facultatif.
+  const tag='c'+Date.now().toString(36);
+  const ups=(Array.isArray(b.photos)?b.photos:[]).slice(0,6).map((d,i)=>saveDataUrl(d,tag+'_p'+i)).filter(Boolean).map(x=>x.url);
+  const link=String(b.imgUrl||'').trim();const imgs=[...ups,...(link?[link]:[])].slice(0,8);
+  const p={id:id(),name:b.name,cat:b.cat,seller:u.id,unit:b.unit||'unité',moq,img:b.img||(imgs.length?'🖼️':'🥿'),imgs:imgs.length?imgs:undefined,sizes:(b.sizes||'36,37,38,39,40,41').split(',').map(x=>x.trim()).filter(Boolean),desc:b.desc||'',sold:0,created:Date.now(),
    tiers:b.tiers?.length?b.tiers:[{min:moq,price:base},{min:moq*10,price:Math.round(base*.92)},{min:moq*50,price:Math.round(base*.85)}]};
-  if(!p.name||!base)throw[400,'Nom et prix requis'];db.products.push(p);save();return p},
+  db.products.push(p);save();return p},
+ // Ajouter des photos à un produit existant (import depuis le téléphone / l'ordinateur)
+ 'POST /api/products/photos':(q,b,u)=>{need(u,'admin');const p=db.products.find(p=>p.id===b.id);if(!p)throw[404,'Produit introuvable'];
+  const tag='f'+Date.now().toString(36);
+  const ups=(Array.isArray(b.photos)?b.photos:[]).slice(0,6).map((d,i)=>saveDataUrl(d,tag+'_p'+i)).filter(Boolean).map(x=>x.url);
+  if(!ups.length)throw[400,'Aucune photo lisible'];
+  if(b.replace)p.imgs=ups;else p.imgs=[...(p.imgs||[]),...ups].slice(0,8);
+  if(p.imgs.length&&(!p.img||p.img==='📦'))p.img='🖼️';
+  save();return{imgs:p.imgs}},
  'POST /api/ship-fee':(q,b,u)=>{need(u,'admin');const o=db.orders.find(o=>o.id===b.id);if(!o)throw[404,'Commande introuvable'];o.ship=Math.max(0,+b.fee||0);o.total=o.sub+o.ship;o.status='frais communiqués — en attente de paiement';save();return o},
  'POST /api/zones':(q,b,u)=>{need(u,'admin');if(!Array.isArray(b.zones))throw[400,'Format invalide'];db.zones=b.zones.filter(z=>z.name).map(z=>({id:z.id||id(),name:String(z.name),fee:Math.max(0,+z.fee||0)}));save();return db.zones},
  'POST /api/products/delete':(q,b,u)=>{need(u,'admin');db.products=db.products.filter(p=>!(p.id===b.id&&p.seller===u.id));save();return{ok:true}},
