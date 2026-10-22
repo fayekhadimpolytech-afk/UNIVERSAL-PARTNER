@@ -125,7 +125,9 @@ module.exports=function(routes,X){
    const t=b.type;if(!['vente','retour','casse','ajustement'].includes(t))throw[400,'Type invalide'];if(!String(b.reason||'').trim())throw[400,'Motif obligatoire'];
    let qn=Math.abs(Math.round(+b.qty));if(!qn)throw[400,'Quantité requise'];const sign=t==='retour'?1:t==='ajustement'?(b.dir==='out'?-1:1):-1;
    move(u,s,t,sign*qn,{reason:b.reason,cost:t==='ajustement'&&sign>0?(+b.cost||s.cmp):undefined});audit(u,'Mouvement '+t,label(s),(sign*qn)+' — '+b.reason);S();return view(s)},
-  'GET /api/erp/moves':(q,b,u)=>{can(u,0,1);let r=E().moves;if(q.type)r=r.filter(m=>m.type===q.type);if(q.sid)r=r.filter(m=>m.sid===q.sid);return r.slice(0,+q.limit||500)},
+  'GET /api/erp/moves':(q,b,u)=>{can(u,0,1);let r=E().moves;if(q.type)r=r.filter(m=>m.type===q.type);if(q.sid)r=r.filter(m=>m.sid===q.sid);
+   if(q.from||q.to){const f=String(q.from||''),t=String(q.to||'');r=r.filter(m=>{const d=dayOf(m.date);return(!f||d>=f)&&(!t||d<=t)})}
+   return r.slice(0,+q.limit||500)},
   // Commandes fournisseurs (version minimale pour la réception ; étape 2 = cycle complet + coût de revient)
   'GET /api/erp/pos':(q,b,u)=>{can(u);return E().pos.map(po=>({...po,lines:(po.lines||[]).map(l=>({...l,img:pimg(l.pid,l.variant)}))}))},
   'POST /api/erp/pos':(q,b,u)=>{can(u,'stock');const e=E();let po=b.id&&e.pos.find(p=>p.id===b.id);const isNew=!po;
