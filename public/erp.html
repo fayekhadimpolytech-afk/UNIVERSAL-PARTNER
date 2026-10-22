@@ -54,6 +54,29 @@ async function boot(){try{ME=await api('erp/me')}catch(e){return loginForm(e==='
 const W=()=>ME.write;const today=()=>new Date().toISOString().slice(0,10),DD=d=>d?d.split('-').reverse().join('/'):'',WS=()=>['admin','stock','commercial','logistique'].includes(ME.user.role);
 async function render(){const m=$('#m');try{m.innerHTML=await V[TAB]()}catch(e){m.innerHTML='<div class="card">'+esc(e)+'</div>'}}
 const opt=(arr,sel)=>arr.map(([v,l])=>`<option value="${esc(v)}" ${v===sel?'selected':''}>${esc(l)}</option>`).join('');
+const VF={from:'',to:'',ref:'order',status:'',src:'',courier:'',zone:'',pay:'',product:'',variant:'',min:'',max:'',q:''};
+const VST=['nouvelle','confirmée','préparée','en livraison','livrée/payée','refusée','retournée','annulée'];
+const VREFL=[['order','Date de commande'],['confirmed','Date de confirmation'],['prepared','Date de préparation'],['out','Date de mise en livraison'],['paid','Date livrée et payée']];
+function vq(){const K=['from','to','ref','status','src','courier','zone','pay','product','variant','min','max','q'],p=[];for(const k of K)if(VF[k])p.push(k+'='+encodeURIComponent(VF[k]));return p.join('&')}
+function vset(k,v){VF[k]=v;if(k==='product')VF.variant='';render()}
+function vst(x){const L=VF.status?VF.status.split(','):[],i=L.indexOf(x);if(i<0)L.push(x);else L.splice(i,1);VF.status=L.join(',');render()}
+function vweek(){const now=new Date(),d0=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate())),dow=(d0.getUTCDay()+6)%7,a=new Date(d0-dow*864e5);return[a.toISOString().slice(0,10),new Date(a.getTime()+6*864e5).toISOString().slice(0,10)]}
+function vsaved(){try{return JSON.parse(localStorage.erpViews||'{}')}catch(e){return{}}}
+function vview(k){if(!k)return;
+ if(k==='__hebdo'){const[a,b]=vweek();VF.from=a;VF.to=b;VF.ref='paid';VF.status='';VF.courier='';VF.zone='';VF.pay='';VF.product='';VF.variant='';VF.min='';VF.max='';VF.q='';return render()}
+ if(k==='__encaisse'){VF.from='';VF.to='';VF.ref='order';VF.status='nouvelle,confirmée,préparée,en livraison';VF.courier='';VF.zone='';VF.pay='';VF.product='';VF.variant='';VF.min='';VF.max='';VF.q='';return render()}
+ const v=vsaved()[k];if(v){Object.assign(VF,v);return render()}}
+function vsave(){const n=prompt("Nom de la vue (ex. « Hebdo livrée-payée »)");if(!n)return;const V=vsaved();V[n]={...VF};try{localStorage.erpViews=JSON.stringify(V)}catch(e){}toast('Vue enregistrée : '+n);render()}
+function vdel(){const n=prompt('Nom de la vue à supprimer');if(!n)return;const V=vsaved();delete V[n];try{localStorage.erpViews=JSON.stringify(V)}catch(e){}toast('Vue supprimée');render()}
+function vquick(k){const now=new Date(),d0=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate())),z=d=>d.toISOString().slice(0,10),dow=(d0.getUTCDay()+6)%7;
+ const set=(a,b)=>{VF.from=z(a);VF.to=z(b);render()};
+ if(k==='today')set(d0,d0);
+ if(k==='yesterday'){const y=new Date(d0-864e5);set(y,y)}
+ if(k==='7d')set(new Date(d0-6*864e5),d0);
+ if(k==='week'){const a=new Date(d0-dow*864e5);set(a,new Date(a.getTime()+6*864e5))}
+ if(k==='month')set(new Date(Date.UTC(d0.getUTCFullYear(),d0.getUTCMonth(),1)),new Date(Date.UTC(d0.getUTCFullYear(),d0.getUTCMonth()+1,0)));
+ if(k==='lastmonth')set(new Date(Date.UTC(d0.getUTCFullYear(),d0.getUTCMonth()-1,1)),new Date(Date.UTC(d0.getUTCFullYear(),d0.getUTCMonth(),0)));
+ if(k==='all'){VF.from='';VF.to='';render()}}
 const V={
 async stock(){const q=$('#sq')?.value||'',al=$('#sal')?.checked;const d=await api('erp/stock?q='+encodeURIComponent(q)+(al?'&alert=1':''));window._st=d.rows;
  return `<div class="kpi"><div><span class="mute">Valeur du stock (CMP)</span><b>${F(d.total.value)}</b></div><div><span class="mute">Pièces en stock</span><b>${N(d.total.qty)}</b></div><div><span class="mute">Alertes réappro</span><b class="${d.total.alerts?'neg':''}">${d.total.alerts}</b></div><div><span class="mute">Ruptures</span><b class="${d.total.outs?'neg':''}">${d.total.outs}</b></div></div>
@@ -80,18 +103,52 @@ async param(){const s=ME.settings;const n=await api('erp/notif');window._nt=n;co
  <label style="display:block;margin:8px 0"><input type="checkbox" name="apply" style="width:auto"> Recalculer les commandes pas encore réceptionnées</label>
  <div class="row"><label class="mute">Fret estimé / unité à l'import (FCFA)<input name="impFreight" type="number" value="${s.imp?.freightUnit??4000}"></label><label class="mute">Marge visée à l'import (%)<input name="impMargin" type="number" value="${s.imp?.margin??50}"></label></div>
  <p class="mute">Sert au prix de vente conseillé lors de l'import d'un produit : prix = (prix fournisseur CNY × taux + fret estimé) ÷ (1 − marge).</p><button>Enregistrer</button></form></div>`},
-async ventes(){const st=$('#vs')?.value||'',src=$('#vsrc')?.value||'',q=$('#vq')?.value||QQ;QQ='';const L=await api('erp/sales?status='+encodeURIComponent(st)+'&src='+src+'&q='+encodeURIComponent(q));window._sa=L;window._cr=await api('erp/couriers');
+async ventes(){if(QQ){VF.q=QQ;QQ=''}window._vfac=await api('erp/sales');const L=await api('erp/sales?'+vq());window._sa=L;window._cr=await api('erp/couriers');
  const done=L.filter(s=>s.status==='livrée/payée'),ko=L.filter(s=>['refusée','retournée'].includes(s.status));
+ const FAC=window._vfac||L;
+ const pnames={};FAC.forEach(s=>s.items.forEach(i=>{if(i.pid&&!pnames[i.pid])pnames[i.pid]=i.name}));
+ const zones=[...new Set(FAC.map(s=>s.delivery?.zone||s.zone||'').filter(Boolean))].sort();
+ const vars=[...new Set(FAC.filter(s=>!VF.product||s.items.some(i=>i.pid===VF.product)).flatMap(s=>s.items.filter(i=>!VF.product||i.pid===VF.product).map(i=>i.variant)).filter(Boolean))].sort();
+ const CH=[[/livrée/,'Livrées / payées'],[/en livraison/,'En livraison'],[/confirmée/,'Confirmées'],[/nouvelle/,'Nouvelles'],[/préparée/,'Préparées'],[/refusée/,'Refusées'],[/retournée/,'Retournées'],[/annulée/,'Annulées']];
+ const chip=(st,lbl)=>`<button class="${(VF.status||'').split(',').includes(st)?'':'g'}" style="flex:0 0 auto;padding:4px 10px;font-size:12px" onclick="vst('${st}')">${esc(lbl)}</button>`;
  return `<div class="kpi"><div><span class="mute">À traiter</span><b>${L.filter(s=>['nouvelle','confirmée','préparée'].includes(s.status)).length}</b></div><div><span class="mute">En livraison</span><b>${L.filter(s=>s.status==='en livraison').length}</b></div><div><span class="mute">Livrées / payées</span><b>${done.length} · ${F(done.reduce((a,s)=>a+s.total,0))}</b></div><div><span class="mute">Taux de réussite</span><b>${done.length+ko.length?Math.round(100*done.length/(done.length+ko.length)):0} %</b></div></div>
- <div class="card row"><input id="vq" placeholder="Client, téléphone, n°…" value="${esc(q)}" onchange="render()"><select id="vs" onchange="render()">${opt([['','Tous statuts'],...['nouvelle','confirmée','préparée','en livraison','livrée/payée','refusée','retournée','annulée'].map(x=>[x,x])],st)}</select><select id="vsrc" onchange="render()">${opt([['','Site + WhatsApp'],['site','🌐 Site'],['whatsapp','💬 WhatsApp']],src)}</select>
- ${WS()?'<button style="flex:0 0 auto" onclick="newSale()">+ Vente WhatsApp</button>':''}<button class="g" style="flex:0 0 auto" onclick="csv(\'ventes\',[\'N°\',\'Source\',\'Date\',\'Client\',\'Téléphone\',\'Adresse\',\'Articles\',\'Total FCFA\',\'Statut\',\'Livreur\',\'Zone\',\'Frais livreur\',\'Paiement\',\'Coût\',\'Marge\'],_sa.map(s=>[s.no,s.source,D(s.date),s.name,s.phone,s.address,s.items.map(i=>i.qty+\'× \'+i.name+(i.variant?\' \'+i.variant:\'\')).join(\' | \'),s.total,s.status,s.delivery?.courierName,s.delivery?.zone,s.delivery?.fee,s.paid?.method,s.cost,s.margin]))">⬇ CSV</button></div>
+ <div class="card">
+  <div class="row"><div style="flex:0 0 auto"><span class="mute" style="font-size:12px;display:block">Du</span><input type="date" value="${esc(VF.from)}" onchange="vset('from',this.value)" style="width:135px"></div>
+   <div style="flex:0 0 auto"><span class="mute" style="font-size:12px;display:block">Au</span><input type="date" value="${esc(VF.to)}" onchange="vset('to',this.value)" style="width:135px"></div>
+   <select onchange="vset('ref',this.value)" title="Date de référence">${opt(VREFL,VF.ref)}</select>
+   <button class="g" style="flex:0 0 auto;padding:6px 8px;font-size:12px" onclick="vquick('today')">Aujourd'hui</button>
+   <button class="g" style="flex:0 0 auto;padding:6px 8px;font-size:12px" onclick="vquick('yesterday')">Hier</button>
+   <button class="g" style="flex:0 0 auto;padding:6px 8px;font-size:12px" onclick="vquick('7d')">7 jours</button>
+   <button class="g" style="flex:0 0 auto;padding:6px 8px;font-size:12px" onclick="vquick('week')">Semaine</button>
+   <button class="g" style="flex:0 0 auto;padding:6px 8px;font-size:12px" onclick="vquick('month')">Mois</button>
+   <button class="g" style="flex:0 0 auto;padding:6px 8px;font-size:12px" onclick="vquick('lastmonth')">Mois dernier</button>
+   <button class="g" style="flex:0 0 auto;padding:6px 8px;font-size:12px" onclick="vquick('all')">Tout</button></div>
+  <div class="row" style="margin-top:6px"><select onchange="vview(this.value)" style="flex:1 1 220px">${opt([['','★ Vues enregistrées…'],['__hebdo','Hebdo livrée-payée'],['__encaisse','À encaisser'],...Object.keys(vsaved()).map(k=>[k,k])],'')}</select><button class="g" style="flex:0 0 auto;font-size:12px" onclick="vsave()">💾 Enregistrer la vue</button><button class="g" style="flex:0 0 auto;font-size:12px" onclick="vdel()">🗑 Supprimer</button></div>
+  <div class="row" style="margin-top:6px"><span class="mute" style="font-size:12px;flex:0 0 auto">Statut :</span>${CH.map(([r,l])=>chip(VST.find(x=>r.test(x)),l)).join('')}</div>
+  <div class="row" style="margin-top:6px">
+   <select onchange="vset('src',this.value)">${opt([['','Site + WhatsApp'],['site','🌐 Site'],['whatsapp','💬 WhatsApp']],VF.src)}</select>
+   <select onchange="vset('courier',this.value)">${opt([['','Tous livreurs'],...window._cr.map(c=>[c.id,c.name])],VF.courier)}</select>
+   <select onchange="vset('zone',this.value)">${opt([['','Toutes zones'],...zones.map(z=>[z,z])],VF.zone)}</select>
+   <select onchange="vset('pay',this.value)">${opt([['','Tous paiements'],['espèces','Espèces'],['Wave','Wave'],['Orange Money','Orange Money']],VF.pay)}</select>
+   <select onchange="vset('product',this.value)">${opt([['','Tous produits'],...Object.keys(pnames).map(k=>[k,pnames[k]])],VF.product)}</select>
+   ${VF.product?`<select onchange="vset('variant',this.value)">${opt([['',"Toutes variantes"],...vars.map(v=>[v,v])],VF.variant)}</select>`:''}
+   <input type="number" placeholder="Montant min" value="${esc(VF.min)}" onchange="vset('min',this.value)">
+   <input type="number" placeholder="Montant max" value="${esc(VF.max)}" onchange="vset('max',this.value)">
+   <input placeholder="Client, téléphone, n°…" value="${esc(VF.q)}" onchange="vset('q',this.value)">
+  </div>
+  <div class="row" style="margin-top:8px"><span class="mute" style="flex:1 1 auto">${L.length} vente(s) dans le périmètre · total ${F(L.reduce((a,s)=>a+s.total,0))}</span>
+   ${WS()?'<button style="flex:0 0 auto" onclick="newSale()">+ Vente WhatsApp</button>':''}<button class="g" style="flex:0 0 auto" onclick="csv('ventes',['N°','Source','Date commande','Date confirmation','Date préparation','Date mise en livraison','Date livrée/payée','Date paiement','Délai commande→encaissement (h)','Client','Téléphone','Adresse','Zone','Articles','Remise FCFA','Total FCFA','Statut','Livreur','Frais livreur','Paiement','Coût','Marge','Marge %'],_sa.map(s=>[s.no,s.source,DH(s.dateOrder),DH(s.dateConfirmed),DH(s.datePrepared),DH(s.dateOut),DH(s.datePaid),DH(s.paid?.date),s.delayH??'',s.name,s.phone,s.address,s.delivery?.zone||s.zone,s.items.map(i=>i.qty+'× '+i.name+(i.variant?' '+i.variant:'')).join(' | '),s.disc||0,s.total,s.status,s.delivery?.courierName,s.delivery?.fee,s.paid?.method,s.cost,s.margin,s.pct]))">⬇ CSV</button></div>
+ </div>
  ${L.map(s=>{const nx={nouvelle:[['confirmée','Confirmer']],confirmée:[['préparée','Préparer (sort du stock)']],préparée:[['en livraison','Affecter un livreur']],'en livraison':[['livrée/payée','Livrée et payée'],['refusée','Refusée'],['retournée','Retournée']],'livrée/payée':[['retournée','Retour client']]}[s.status]||[];
-  return `<div class="card"><div class="row"><div><b>${esc(s.no)}</b> ${s.source==='site'?'🌐':'💬'} · ${esc(s.name)} · <a href="https://wa.me/221${esc(s.phone.replace(/\D/g,'').replace(/^221/,''))}" target="_blank">${esc(s.phone)}</a><br><span class="mute">${D(s.date)} · ${esc(s.address)}</span></div>
+  return `<div class="card"><div class="row"><div><b>${esc(s.no)}</b> ${s.source==='site'?'🌐':'💬'} · ${esc(s.name)} · <a href="https://wa.me/221${esc(s.phone.replace(/\D/g,'').replace(/^221/,''))}" target="_blank">${esc(s.phone)}</a><br><span class="mute">${DH(s.dateOrder)} · ${esc(s.address)}</span></div>
   <div style="flex:0 0 auto;text-align:right"><span class="badge ${s.status==='livrée/payée'?'b-ok':['refusée','retournée','annulée'].includes(s.status)?'b-red':s.status==='en livraison'?'b-am':''}">${esc(s.status)}</span><br><b>${F(s.total)}</b></div></div>
   <div class="mute">${s.items.map(i=>`<div class="it" style="gap:8px;margin:3px 0">${thumb(i.img,i.name)}<div class="t">${i.qty} × ${esc(i.name)}${i.variant?' <span class="mute">('+esc(i.variant)+')</span>':''} à ${F(i.price)}</div></div>`).join('')}</div>
+  <div class="mute">🗓 Commande ${DH(s.dateOrder)}${s.dateConfirmed?' → confirmée '+DH(s.dateConfirmed):''}${s.dateOut?' → mise en livraison '+DH(s.dateOut):''}${s.datePaid?' → <b>payée '+DH(s.datePaid)+'</b>'+(s.delayH!=null?' ('+s.delayH+' h)':''):''}</div>
+  ${s.disc?`<div class="mute">🏷 Remise ${F(s.disc)}${s.coupon?.code?' (code '+esc(s.coupon.code)+')':''}</div>`:''}
   ${s.delivery?`<div class="mute">🛵 ${esc(s.delivery.courierName)} (${esc(s.delivery.courierPhone)}) · zone ${esc(s.delivery.zone)} · frais livreur ${F(s.delivery.fee)}</div>`:''}${s.paid?`<div class="mute">💰 ${F(s.paid.amount)} en ${esc(s.paid.method)}</div>`:''}
   ${s.margin!=null?`<div class="mute ${s.pct<50?'neg':''}">Coût ${F(s.cost)} · marge ${F(s.margin)} (${s.pct} %)${s.pct<50?' 🔴 sous 50 %':''}</div>`:''}${s.reason?`<div class="mute">Motif : ${esc(s.reason)}</div>`:''}${s.restocked?'<div class="mute">↩️ Remis en stock</div>':''}
-  <div class="row" style="margin-top:6px">${WS()?nx.map(([k,l])=>`<button class="${k==='livrée/payée'?'r':k==='refusée'||k==='retournée'?'g':''}" onclick="sst('${s.id}','${k}')">${l}</button>`).join(''):''}${WS()&&['nouvelle','confirmée','préparée'].includes(s.status)?`<button class="g" onclick="sst('${s.id}','annulée')">Annuler</button>`:''}<button class="g" onclick="pdf('${s.id}')">📄 Bon de livraison</button></div></div>`}).join('')||'<div class="card mute">Aucune vente.</div>'}`},
+  <div class="row" style="margin-top:6px">${WS()?nx.map(([k,l])=>`<button class="${k==='livrée/payée'?'r':k==='refusée'||k==='retournée'?'g':''}" onclick="sst('${s.id}','${k}')">${l}</button>`).join(''):''}${WS()&&['nouvelle','confirmée','préparée'].includes(s.status)?`<button class="g" onclick="sst('${s.id}','annulée')">Annuler</button>`:''}<button class="g" onclick="pdf('${s.id}')">📄 Bon de livraison</button></div></div>`}).join('')||'<div class="card mute">Aucune vente dans ce périmètre.</div>'}`},
+
 async livreurs(){const L=await api('erp/couriers');window._cr=L;return `<div class="card row"><h2 style="flex:1 1 auto;margin:0">Livreurs indépendants</h2>${WS()?'<button style="flex:0 0 auto" onclick="cForm()">+ Livreur</button>':''}<button class="g" style="flex:0 0 auto" onclick="csv(\'livreurs\',[\'Nom\',\'Téléphone\',\'Zone\',\'Livraisons\',\'Réussies\',\'Refusées/retours\',\'Frais payés FCFA\'],_cr.map(c=>[c.name,c.phone,c.zone,c.count,c.ok,c.ko,c.fees]))">⬇ CSV</button></div>
  ${L.map(c=>`<div class="card row"><div><b>${esc(c.name)}</b> · <a href="tel:${esc(c.phone)}">${esc(c.phone)}</a><br><span class="mute">${esc(c.zone)} · ${c.count} livraison(s), ${c.ok} réussie(s), ${c.ko} échec(s) · frais ${F(c.fees)}</span></div>${WS()?`<button class="g" style="flex:0 0 auto" onclick="cForm('${c.id}')">Modifier</button>`:''}</div>`).join('')||'<div class="card mute">Aucun livreur : crée-le au moment d\'affecter une livraison.</div>'}`},
 async caisse(){const day=$('#cd')?.value||today();const d=await api('erp/cash?day='+day);window._ca=d;const M=['espèces','Wave','Orange Money'];

@@ -54,10 +54,19 @@ module.exports=function(routes,X){
   L.forEach(l=>{const wf=sumKey>0?key(l)/sumKey:(+l.qty||0)/qtot,wv=goods>0?l.goods/goods:(+l.qty||0)/qtot;
    l.freight=Math.round(freight*wf);l.other=Math.round(other*wv);l.total=l.goods+l.freight+l.other;l.unitCost=Math.round(l.total/(+l.qty||1))});
   Object.assign(po,{rate,goods,measure,freightAuto,freight,other,total:goods+freight+other,allocBy:sumKey>0?(sea?'volume':'poids'):'quantité'});return dry?po:po}
- const tot=sa=>sa.items.reduce((a,i)=>a+i.qty*i.price,0);
-  const sv=sa=>{const t=tot(sa),c=sa.items.reduce((a,i)=>a+(i.cost||0)*i.qty,0);return{...sa,items:sa.items.map(i=>({...i,img:pimg(i.pid,i.variant)})),total:t,cost:sa.picked?c:null,margin:sa.picked?t-c:null,pct:sa.picked&&t?Math.round(100*(t-c)/t):null}};
- function syncSite(){const e=E(),db=X.db();for(const o of db.orders||[]){if(e.sales.some(s=>s.ref===o.id))continue;
-  e.sales.unshift({id:id(),ref:o.id,no:o.id,source:'site',date:o.date,name:o.name||'',phone:o.phone||'',address:o.address||'',zone:'',note:'',status:'nouvelle',dates:{nouvelle:o.date},
+ // Total = articles − remise (codes promo). La remise était perdue à la synchro site → marge et caisse fausses.
+ const tot=sa=>Math.max(0,sa.items.reduce((a,i)=>a+i.qty*i.price,0)-Math.max(0,+sa.disc||0));
+  // sv() expose aussi les dates de chaque étape (pour les filtres de période et les exports).
+  const sv=sa=>{const t=tot(sa),c=sa.items.reduce((a,i)=>a+(i.cost||0)*i.qty,0);
+   const dOrder=sa.dates?.nouvelle||sa.date,dConf=sa.dates?.['confirmée']||null,dPrep=sa.dates?.['préparée']||null,dOut=sa.dates?.['en livraison']||null,dPaid=sa.paid?.date||sa.dates?.['livrée/payée']||null;
+   return{...sa,items:sa.items.map(i=>({...i,img:pimg(i.pid,i.variant)})),total:t,disc:Math.max(0,+sa.disc||0),cost:sa.picked?c:null,margin:sa.picked?t-c:null,pct:sa.picked&&t?Math.round(100*(t-c)/t):null,
+    dateOrder:dOrder,dateConfirmed:dConf,datePrepared:dPrep,dateOut:dOut,datePaid:dPaid,delayH:dPaid&&dOrder?Math.round((dPaid-dOrder)/36e5*10)/10:null}};
+ function syncSite(){const e=E(),db=X.db();for(const o of db.orders||[]){
+  const ex=e.sales.find(s=>s.ref===o.id);
+  // Commande déjà importée : on récupère la remise du code promo si elle manquait (corrige marge/caisse sans toucher aux totaux déjà réglés).
+  if(ex){if(ex.disc==null&&+o.disc>0&&!ex.paid){ex.disc=+o.disc;if(o.coupon)ex.coupon=o.coupon}continue}
+  e.sales.unshift({id:id(),ref:o.id,no:o.id,source:'site',date:o.date,name:o.name||'',phone:o.phone||'',address:o.address||'',zone:o.zone||'',note:'',status:'nouvelle',dates:{nouvelle:o.date},
+   disc:Math.max(0,+o.disc||0),coupon:o.coupon||null,
    items:o.items.map(i=>({pid:i.id,name:i.name,variant:[i.size?'Taille '+i.size:'',i.color||''].filter(Boolean).join(' / '),qty:i.qty,price:i.price}))})}e.sales.sort((a,b)=>b.date-a.date)}
  // Sortie de stock à la préparation, au CMP du moment (sert au calcul de marge)
  function stockFor(i){const L=E().stock.filter(s=>s.pid===i.pid),nz=v=>String(v||'').replace(/Taille /g,'').toLowerCase().split(/\s*\/\s*/).filter(Boolean).sort().join('/');
@@ -175,8 +184,24 @@ module.exports=function(routes,X){
    inv.status='validé';inv.closed=Date.now();audit(u,'Validation inventaire','',n+' écarts ajustés');S();return inv},
   'GET /api/erp/audit':(q,b,u)=>{can(u);return E().audit.slice(0,+q.limit||500)},
   // ---- Ventes et livraisons ----
-  'GET /api/erp/sales':(q,b,u)=>{can(u,0,1);syncSite();let r=E().sales;if(q.status)r=r.filter(x=>x.status===q.status);if(q.src)r=r.filter(x=>x.source===q.src);
-   if(q.q){const k=q.q.toLowerCase();r=r.filter(x=>(x.no+x.name+x.phone+x.address).toLowerCase().includes(k))}return r.map(sv)},
+  // Filtres vue Ventes : période + date de référence, statuts multiples, livreur, zone, paiement, produit/variante, montants, texte.
+  // Les dates par étape sont déjà stockées (dates{}) → aucun recalcul nécessaire côté client.
+  'GET /api/erp/sales':(q,b,u)=>{can(u,0,1);syncSite();let r=E().sales;
+   const list=v=>String(v||'').split(',').map(x=>x.trim()).filter(Boolean);
+   const sts=list(q.status);if(sts.length)r=r.filter(x=>sts.includes(x.status));
+   if(q.src)r=r.filter(x=>x.source===q.src);
+   const from=String(q.from||'').trim(),to=String(q.to||'').trim(),ref=String(q.ref||'order');
+   const RF={order:x=>x.dates?.nouvelle||x.date,confirmed:x=>x.dates?.['confirmée'],prepared:x=>x.dates?.['préparée'],out:x=>x.dates?.['en livraison'],paid:x=>x.paid?.date||x.dates?.['livrée/payée']};
+   if(from||to){const key=RF[ref]||RF.order;r=r.filter(x=>{const t=key(x);if(!t)return false;const d=dayOf(t);return(!from||d>=from)&&(!to||d<=to)})}
+   else if(ref!=='order'&&RF[ref]){r=r.filter(x=>!!RF[ref](x))}
+   if(q.courier)r=r.filter(x=>x.delivery?.courier===q.courier);
+   if(q.zone)r=r.filter(x=>(x.delivery?.zone||x.zone||'')===q.zone);
+   if(q.pay)r=r.filter(x=>x.paid?.method===q.pay);
+   if(q.product){const pid=q.product,vr=String(q.variant||'');r=r.filter(x=>x.items.some(i=>i.pid===pid&&(!vr||i.variant===vr)))}
+   const mn=String(q.min??'').trim(),mx=String(q.max??'').trim();
+   if(mn!==''&&!isNaN(+mn))r=r.filter(x=>tot(x)>=+mn);if(mx!==''&&!isNaN(+mx))r=r.filter(x=>tot(x)<=+mx);
+   if(q.q){const k=q.q.toLowerCase();r=r.filter(x=>(x.no+x.name+x.phone+x.address).toLowerCase().includes(k))}
+   return r.map(sv)},
   'POST /api/erp/sales':(q,b,u)=>{can(u,'sales',1);const e=E();if(!String(b.name||'').trim()||!String(b.phone||'').trim())throw[400,'Nom et téléphone requis'];if(!b.items?.length)throw[400,'Au moins un article'];
    const items=b.items.map(i=>{const p=prod(i.pid);if(!p)throw[400,'Produit invalide'];return{pid:p.id,name:p.name,variant:String(i.variant||'').trim(),qty:Math.max(1,Math.round(+i.qty)),price:Math.round(+i.price||p.tiers?.[0]?.price||0)}});
    const sa={id:id(),no:'WA'+String(Date.now()).slice(-6),source:'whatsapp',date:Date.now(),name:String(b.name).trim(),phone:String(b.phone).trim(),address:String(b.address||'').trim(),zone:String(b.zone||'').trim(),note:String(b.note||''),items,status:'nouvelle',dates:{nouvelle:Date.now()},by:u.name};
