@@ -54,12 +54,24 @@ module.exports=function(routes,X){
   L.forEach(l=>{const wf=sumKey>0?key(l)/sumKey:(+l.qty||0)/qtot,wv=goods>0?l.goods/goods:(+l.qty||0)/qtot;
    l.freight=Math.round(freight*wf);l.other=Math.round(other*wv);l.total=l.goods+l.freight+l.other;l.unitCost=Math.round(l.total/(+l.qty||1))});
   Object.assign(po,{rate,goods,measure,freightAuto,freight,other,total:goods+freight+other,allocBy:sumKey>0?(sea?'volume':'poids'):'quantité'});return dry?po:po}
+ // Agrégat de marge : ne compte QUE les ventes dont le coût de revient est connu.
+ const costAgg=L=>{const K=L.filter(s=>s.cost!=null),ca=K.reduce((a,s)=>a+s.total,0),c=K.reduce((a,s)=>a+s.cost,0);
+  return{ca,cost:c,margin:ca-c,pct:ca?Math.round(100*(ca-c)/ca):0,costed:K.length,unknown:L.length-K.length}};
  // Total = articles − remise (codes promo). La remise était perdue à la synchro site → marge et caisse fausses.
  const tot=sa=>Math.max(0,sa.items.reduce((a,i)=>a+i.qty*i.price,0)-Math.max(0,+sa.disc||0));
   // sv() expose aussi les dates de chaque étape (pour les filtres de période et les exports).
-  const sv=sa=>{const t=tot(sa),c=sa.items.reduce((a,i)=>a+(i.cost||0)*i.qty,0);
+  // Coût de revient : CMP du stock au moment de la préparation (i.cost).
+  // CMP absent ou nul ⇒ coût INCONNU : la marge n'est pas calculable et ne doit jamais s'afficher 0 %.
+  // CMP égal au prix de vente ⇒ coût probablement saisi à l'envers (signalé « à vérifier »), la marge reste calculée.
+  const sv=sa=>{const t=tot(sa);
+   const known=sa.items.filter(i=>(+i.cost||0)>0),unk=sa.items.filter(i=>!(+i.cost||0));
+   const cKnown=known.reduce((a,i)=>a+(+i.cost)*i.qty,0);
+   const allKnown=!!sa.picked&&!unk.length,cost=sa.picked?(allKnown?cKnown:null):null;
+   const margin=cost!=null?t-cost:null,pct=margin!=null&&t?Math.round(100*margin/t):null;
+   const suspect=!!sa.picked&&known.some(i=>{const p=prod(i.pid),pr=p?.tiers?.[0]?.price;return pr!=null&&pr>0&&pr===+i.cost});
    const dOrder=sa.dates?.nouvelle||sa.date,dConf=sa.dates?.['confirmée']||null,dPrep=sa.dates?.['préparée']||null,dOut=sa.dates?.['en livraison']||null,dPaid=sa.paid?.date||sa.dates?.['livrée/payée']||null;
-   return{...sa,items:sa.items.map(i=>({...i,img:pimg(i.pid,i.variant)})),total:t,disc:Math.max(0,+sa.disc||0),cost:sa.picked?c:null,margin:sa.picked?t-c:null,pct:sa.picked&&t?Math.round(100*(t-c)/t):null,
+   return{...sa,items:sa.items.map(i=>({...i,img:pimg(i.pid,i.variant)})),total:t,disc:Math.max(0,+sa.disc||0),cost,margin,pct,
+    costUnknown:!!sa.picked&&!allKnown,costPartial:!!sa.picked&&!!unk.length&&!!known.length,costSuspect:suspect,
     dateOrder:dOrder,dateConfirmed:dConf,datePrepared:dPrep,dateOut:dOut,datePaid:dPaid,delayH:dPaid&&dOrder?Math.round((dPaid-dOrder)/36e5*10)/10:null}};
  function syncSite(){const e=E(),db=X.db();for(const o of db.orders||[]){
   const ex=e.sales.find(s=>s.ref===o.id);
@@ -230,7 +242,8 @@ module.exports=function(routes,X){
     r.expected[s.paid.method]+=s.paid.amount;r.fees+=s.delivery.fee||0;r.sales.push({no:s.no,name:s.name,amount:s.paid.amount,method:s.paid.method,items:(s.items||[]).map(i=>({name:i.name,variant:i.variant,img:pimg(i.pid,i.variant)}))})}
    for(const c of e.cash.filter(c=>c.day===day))rows[c.courier]??={courier:c.courier,name:c.name,phone:'',expected:c.expected,fees:0,sales:[]};
    const list=Object.values(rows).map(r=>{const st=e.cash.find(c=>c.day===day&&c.courier===r.courier);return{...r,settlement:st||null}});
-   return{day,rows:list,history:e.cash.slice(0,200)}},
+   const pFrom=String(q.from||'').trim()||dayOf(Date.now()).slice(0,8)+'01',pTo=String(q.to||'').trim()||dayOf(Date.now());
+   return{day,rows:list,history:e.cash.slice(0,200),period:cashPeriod(e,pFrom,pTo)}},
   'POST /api/erp/cash':(q,b,u)=>{can(u,'sales');const e=E();const day=String(b.day||'');if(!/^\d{4}-\d{2}-\d{2}$/.test(day))throw[400,'Date invalide'];
    const cur=routes['GET /api/erp/cash']({day},{},u).rows.find(r=>r.courier===b.courier);if(!cur)throw[404,'Aucun encaissement pour ce livreur ce jour-là'];
    const M=['espèces','Wave','Orange Money'],rem={},gap={};M.forEach(m=>{rem[m]=Math.max(0,Math.round(+b.remitted?.[m]||0));gap[m]=rem[m]-cur.expected[m]});
@@ -249,17 +262,18 @@ module.exports=function(routes,X){
   'GET /api/erp/margins':(q,b,u)=>{can(u);const e=E(),from=q.from||'0000',to=q.to||'9999',g=q.group||'jour';
    const L=e.sales.filter(s=>s.status==='livrée/payée'&&s.picked!==false).map(sv).filter(s=>{const d=dayOf(s.paid?.date||s.date);return d>=from&&d<=to});
    const key=t=>{const d=dayOf(t);if(g==='mois')return d.slice(0,7);if(g==='semaine'){const x=new Date(d+'T00:00:00Z'),w=(x.getUTCDay()+6)%7;x.setUTCDate(x.getUTCDate()-w);return x.toISOString().slice(0,10)}return d};
-   const P={};for(const s of L){const k=key(s.paid?.date||s.date),p=P[k]??={period:k,count:0,revenue:0,cost:0,fees:0};p.count++;p.revenue+=s.total;p.cost+=s.cost||0;p.fees+=s.delivery?.fee||0}
+   const P={};for(const s of L){const k=key(s.paid?.date||s.date),p=P[k]??={period:k,count:0,revenue:0,cost:0,fees:0,unknown:0};p.count++;p.revenue+=s.total;
+    if(s.cost!=null){p.cost+=s.cost;p.costedRev=(p.costedRev||0)+s.total}else {p.unknown++}p.fees+=s.delivery?.fee||0}
    const ex=e.expenses.filter(x=>x.day>=from&&x.day<=to);for(const x of ex.filter(x=>!['fret','transitaire'].includes(x.cat))){const p=P[key(Date.parse(x.day+'T12:00:00Z'))]??={period:key(Date.parse(x.day+'T12:00:00Z')),count:0,revenue:0,cost:0,fees:0};p.exp=(p.exp||0)+x.amount}
-   const per=Object.values(P).map(p=>({...p,exp:p.exp||0,margin:p.revenue-p.cost,pct:p.revenue?Math.round(100*(p.revenue-p.cost)/p.revenue):0,net:p.revenue-p.cost-p.fees-(p.exp||0)})).sort((a,b)=>b.period.localeCompare(a.period));
-   const T=per.reduce((a,p)=>({count:a.count+p.count,revenue:a.revenue+p.revenue,cost:a.cost+p.cost,fees:a.fees+p.fees,exp:a.exp+p.exp}),{count:0,revenue:0,cost:0,fees:0,exp:0});
-   T.margin=T.revenue-T.cost;T.pct=T.revenue?Math.round(100*T.margin/T.revenue):0;T.net=T.margin-T.fees-T.exp;
-   return{sales:L.map(s=>({id:s.id,no:s.no,date:s.paid?.date||s.date,name:s.name,total:s.total,cost:s.cost,margin:s.margin,pct:s.total?Math.round(100*s.margin/s.total):0,fee:s.delivery?.fee||0,red:s.total?s.margin/s.total<.5:false,items:s.items.map(i=>i.qty+'× '+i.name+(i.variant?' '+i.variant:'')).join(' | ')})),periods:per,total:T,threshold:50}},
+   const per=Object.values(P).map(p=>{const cr=p.costedRev||0;return{...p,exp:p.exp||0,costedRev:cr,margin:cr-p.cost,pct:cr?Math.round(100*(cr-p.cost)/cr):0,net:cr-p.cost-p.fees-(p.exp||0)}}).sort((a,b)=>b.period.localeCompare(a.period));
+   const T=per.reduce((a,p)=>({count:a.count+p.count,revenue:a.revenue+p.revenue,cost:a.cost+p.cost,costedRev:a.costedRev+p.costedRev,fees:a.fees+p.fees,exp:a.exp+p.exp,unknown:a.unknown+p.unknown}),{count:0,revenue:0,cost:0,costedRev:0,fees:0,exp:0,unknown:0});
+   T.costedRev=Math.round(T.costedRev);T.margin=T.costedRev-T.cost;T.pct=T.costedRev?Math.round(100*T.margin/T.costedRev):0;T.net=T.margin-T.fees-T.exp;
+   return{sales:L.map(s=>({id:s.id,no:s.no,date:s.paid?.date||s.date,name:s.name,total:s.total,cost:s.cost,margin:s.margin,pct:s.pct,fee:s.delivery?.fee||0,red:s.pct!=null&&s.pct<50,costUnknown:!!s.costUnknown,items:s.items.map(i=>i.qty+'× '+i.name+(i.variant?' '+i.variant:'')).join(' | ')})),periods:per,total:T,threshold:50,unknown:L.filter(s=>s.costUnknown).length}},
   // ---- Tableau de bord ----
   'GET /api/erp/dashboard':(q,b,u)=>{can(u,0,1);syncSite();const e=E(),now=Date.now(),td=dayOf(now);
    const wk=(()=>{const x=new Date(td+'T00:00:00Z');x.setUTCDate(x.getUTCDate()-(x.getUTCDay()+6)%7);return x.toISOString().slice(0,10)})(),mo=td.slice(0,7)+'-01';
    const paid=e.sales.filter(s=>s.status==='livrée/payée').map(sv),pd=s=>dayOf(s.paid?.date||s.date);
-   const per=from=>{const L=paid.filter(s=>pd(s)>=from),ca=L.reduce((a,s)=>a+s.total,0),c=L.reduce((a,s)=>a+(s.cost||0),0);return{count:L.length,ca,margin:ca-c,pct:ca?Math.round(100*(ca-c)/ca):0,basket:L.length?Math.round(ca/L.length):0}};
+   const per=from=>{const L=paid.filter(s=>pd(s)>=from),ca=L.reduce((a,s)=>a+s.total,0),g=costAgg(L);return{count:L.length,ca,margin:g.margin,pct:g.pct,basket:L.length?Math.round(ca/L.length):0,unknown:g.unknown}};
    const ok=e.sales.filter(s=>s.status==='livrée/payée').length,ko=e.sales.filter(s=>['refusée','retournée'].includes(s.status)).length;
    const st=e.stock.map(view);const top={};for(const s of paid)for(const i of s.items){const t=top[i.pid]??={pid:i.pid,name:i.name,img:pimg(i.pid,i.variant),qty:0,ca:0};t.qty+=i.qty;t.ca+=i.qty*i.price}
    const last={};for(const m of e.moves){const k=m.sid;if(m.type==='vente')last[k]=Math.max(last[k]||0,m.date);if(m.qty>0&&m.type!=='retour')(last['in'+k]??=m.date,last['in'+k]=Math.min(last['in'+k],m.date))}
@@ -288,13 +302,44 @@ module.exports=function(routes,X){
    return push('Test Universal Partner','✅ Les notifications fonctionnent.\nExemple : nouvelle commande, client, articles, montant, zone.',BASE+'/erp.html',['white_check_mark'])},
   'POST /api/erp/demo':(q,b,u)=>{if(u?.role!=='admin')throw[403,'Réservé à l\'admin'];const r=demo(u,b.purge);S();return r},
  });
+ // ---- Caisse : agrégation LECTURE SEULE sur une période (contrôle des remises) ----
+ // Un jour/livreur attendu sans remise enregistrée = « non clôturé » : jamais compté comme 0.
+ function cashPeriod(e,from,to){
+  const M=['espèces','Wave','Orange Money'],inR=d=>(!from||d>=from)&&(!to||d<=to);
+  const days={},cour={},keyExp={},keyRem={},settled={};
+  // Les fiches livreur sont parfois dupliquées (même nom, id différent) : on regroupe par nom normalisé.
+  const ck=n=>String(n||'').trim().toLowerCase();
+  const D=d=>days[d]??={day:d,exp:{},rem:{},expected:0,remitted:0,gap:null,closed:true,missing:[],users:[]};
+  const C=(k,n)=>cour[k]??={courier:k,name:String(n||'').trim(),expected:0,remitted:0,gap:0,days:[],unclosed:0};
+  for(const s of e.sales){
+   if(s.status!=='livrée/payée'||!s.paid||!s.delivery)continue;
+   const d=dayOf(s.paid.date);if(!inR(d))continue;
+   const r=D(d),m=s.paid.method;r.exp[m]=(r.exp[m]||0)+s.paid.amount;r.expected+=s.paid.amount;
+   const k=d+'|'+ck(s.delivery.courierName),c=C(ck(s.delivery.courierName),s.delivery.courierName);
+   keyExp[k]=(keyExp[k]||0)+s.paid.amount;c.expected+=s.paid.amount;if(!c.days.includes(d))c.days.push(d);
+  }
+  for(const x of e.cash){
+   if(!inR(x.day))continue;const d=x.day,r=D(d),c=C(ck(x.name),x.name);
+   for(const m of M)r.rem[m]=(r.rem[m]||0)+((x.remitted&&x.remitted[m])||0);
+   r.remitted+=+x.totalRemitted||0;if(x.user&&!r.users.includes(x.user))r.users.push(x.user);
+   c.remitted+=+x.totalRemitted||0;if(!c.days.includes(d))c.days.push(d);
+   const k=d+'|'+ck(x.name);keyRem[k]=(keyRem[k]||0)+(+x.totalRemitted||0);settled[k]=1;
+  }
+  for(const k in keyExp){if(settled[k])continue;const[d,cid]=k.split('|'),r=D(d),c=C(cid);r.missing.push(c.name||'livreur');c.unclosed++}
+  const list=Object.values(days).map(r=>{r.closed=!r.missing.length;r.gap=r.closed?r.remitted-r.expected:null;return r}).sort((a,b)=>b.day.localeCompare(a.day));
+  for(const k in keyExp){if(!settled[k])continue;const[d,cid]=k.split('|');C(cid).gap+=(keyRem[k]||0)-keyExp[k]}
+  const byCourier=Object.values(cour).map(c=>({...c,days:c.days.length})).sort((a,b)=>b.gap-a.gap||b.expected-a.expected);
+  const T=list.reduce((a,r)=>({expected:a.expected+r.expected,remitted:a.remitted+r.remitted,unclosed:a.unclosed+(r.closed?0:1),closedExpected:a.closedExpected+(r.closed?r.expected:0),closedRemitted:a.closedRemitted+(r.closed?r.remitted:0)}),{expected:0,remitted:0,unclosed:0,closedExpected:0,closedRemitted:0});
+  T.gap=T.closedRemitted-T.closedExpected;
+  return{from,to,days:list,byCourier,totals:T};
+ }
+
  // ---- Rapport hebdomadaire (auto chaque lundi 09:00 Dakar = UTC) ----
  const nF=n=>Number(n||0).toLocaleString('fr-FR');
  function buildReport(from,to){const e=E();syncSite();
   const inR=t=>{const d=dayOf(t);return d>=from&&d<=to};
   const paid=e.sales.filter(s=>s.status==='livrée/payée').map(sv).filter(s=>inR(s.paid?.date||s.date));
-  const ca=paid.reduce((a,s)=>a+s.total,0),cost=paid.reduce((a,s)=>a+(s.cost||0),0);
-  const margin=ca-cost,pct=ca?Math.round(100*margin/ca):0;
+  const ca=paid.reduce((a,s)=>a+s.total,0),G=costAgg(paid),cost=G.cost,margin=G.margin,pct=G.pct;
   const received=e.sales.filter(s=>inR(s.date));
   const bySource={};received.forEach(s=>bySource[s.source]=(bySource[s.source]||0)+1);
   const top={};for(const s of paid)for(const i of s.items){const t=top[i.pid]??={pid:i.pid,name:i.name,img:pimg(i.pid,i.variant),qty:0,ca:0};t.qty+=i.qty;t.ca+=i.qty*i.price}
@@ -307,10 +352,11 @@ module.exports=function(routes,X){
   const gaps=e.cash.filter(c=>c.totalGap&&inR(Date.parse(c.day+'T12:00:00Z'))).map(c=>({day:c.day,name:c.name||c.courier,totalGap:c.totalGap}));
   const pending=e.sales.filter(s=>['nouvelle','confirmée','préparée','en livraison'].includes(s.status));
   const pos=e.pos.filter(p=>!/réceptionnée totale|clôturée/.test(p.status)).map(p=>({no:p.no||'brouillon',status:p.status,eta:p.eta,total:p.total}));
-  return{from,to,ca,margin,pct,count:paid.length,basket:paid.length?Math.round(ca/paid.length):0,received:received.length,bySource,top:Object.values(top).sort((a,b)=>b.qty-a.qty||b.ca-a.ca).slice(0,5),outs:outs.map(s=>({label:s.label,qty:s.qty,img:s.img})),low:low.map(s=>({label:s.label,qty:s.qty,min:s.min,img:s.img})),dormant:dormant.map(s=>({label:s.label,days:s.days,qty:s.qty,value:s.value,img:s.img})),cash:{byMethod,total:Object.values(byMethod).reduce((a,b)=>a+b,0),gaps},pending:{count:pending.length,value:pending.reduce((a,s)=>a+tot(s),0)},pos}}
+  return{from,to,ca,margin,pct,costed:G.costed,unknownCost:G.unknown,count:paid.length,basket:paid.length?Math.round(ca/paid.length):0,received:received.length,bySource,top:Object.values(top).sort((a,b)=>b.qty-a.qty||b.ca-a.ca).slice(0,5),outs:outs.map(s=>({label:s.label,qty:s.qty,img:s.img})),low:low.map(s=>({label:s.label,qty:s.qty,min:s.min,img:s.img})),dormant:dormant.map(s=>({label:s.label,days:s.days,qty:s.qty,value:s.value,img:s.img})),cash:{byMethod,total:Object.values(byMethod).reduce((a,b)=>a+b,0),gaps},pending:{count:pending.length,value:pending.reduce((a,s)=>a+tot(s),0)},pos}}
  function reportText(r){const dd=d=>d.split('-').reverse().join('/');return ['📊 Rapport hebdo Universal Partner','Semaine du '+dd(r.from)+' au '+dd(r.to),
   'CA livré/payé : '+nF(r.ca)+' FCFA · marge '+nF(r.margin)+' ('+r.pct+' %) · '+r.count+' vente(s) · panier '+nF(r.basket)+' FCFA',
   'Commandes reçues : '+r.received+' (site '+(r.bySource.site||0)+', WhatsApp '+(r.bySource.whatsapp||0)+')',
+  ...(r.unknownCost?['⚠️ '+r.unknownCost+' vente(s) sans coût de revient : marge calculée sur '+r.costed+' vente(s) seulement']:[]),
   'Meilleures ventes : '+(r.top.map((t,i)=>(i+1)+') '+t.name+' ('+t.qty+')').join(' · ')||'—'),
   'Ruptures : '+(r.outs.map(s=>s.label).join(', ')||'aucune')+'  |  Stock bas : '+(r.low.map(s=>s.label).join(', ')||'aucun'),
   'Dormants (>60 j) : '+(r.dormant.length?r.dormant.slice(0,5).map(s=>s.label+' ('+s.days+' j)').join(', '):'aucun'),
