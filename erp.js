@@ -23,8 +23,9 @@ module.exports=function(routes,X){
  // Mouvement : qty signée. Entrées au coût → coût moyen pondéré.
  function move(u,s,type,qty,{cost,reason,ref}={}){qty=Math.round(+qty);if(!qty)return;
   if(qty<0&&s.qty+qty<0)throw[400,'Stock insuffisant pour '+label(s)+' ('+s.qty+' dispo)'];
-  if(qty>0&&cost!=null&&type!=='retour'){const c=Math.round(+cost);s.cmp=s.qty>0?Math.round((s.qty*s.cmp+qty*c)/(s.qty+qty)):c}
-  const wasOk=s.qty>s.min;s.qty+=qty;if(qty<0&&wasOk&&s.qty<=s.min&&!X.quiet)setImmediate(()=>checkLow(s));if(s.qty>s.min)delete lowSent[s.id];E().moves.unshift({id:id(),date:Date.now(),type,sid:s.id,label:label(s),qty,cost:Math.round(cost??s.cmp),reason:reason||'',ref:ref||'',user:u?.name||'système'});
+  // Un coût absent ou à 0 ne doit JAMAIS écraser le CMP (facture fournisseur pas encore reçue) : il reste inconnu.
+  if(qty>0&&cost!=null&&+cost>0&&type!=='retour'){const c=Math.round(+cost);s.cmp=s.qty>0?Math.round((s.qty*s.cmp+qty*c)/(s.qty+qty)):c}
+  const wasOk=s.qty>s.min;s.qty+=qty;if(qty<0&&wasOk&&s.qty<=s.min&&!X.quiet)setImmediate(()=>checkLow(s));if(s.qty>s.min)delete lowSent[s.id];E().moves.unshift({id:id(),date:Date.now(),type,sid:s.id,label:label(s),qty,cost:Math.round((cost!=null&&+cost>0)?cost:s.cmp),reason:reason||'',ref:ref||'',user:u?.name||'système'});
   sync(s.pid)}
  // Taille canonique d'une variante de stock ("Taille 36-37", "Blanc 36-37", "40-41") -> "36-37" ; '' si ce n'est pas une taille
  const szTok=v=>{let t=String(v||'').trim().replace(/^taille\s+/i,'').replace(/^[^\d]+/,'').trim();return /^\d{2}(-\d{2})?$/.test(t)?t:''};
